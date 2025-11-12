@@ -1,55 +1,21 @@
+import { extractYearFromStudy, getAvailableYears, YEAR_CONSTANTS } from './yearExtractor';
+import { logger } from './logger';
+
+/**
+ * Process cumulative growth data from studies
+ * @param studies - Array of study objects
+ * @returns Object containing cumulative growth data and unknown year count
+ */
 export const processCumulativeGrowthData = (studies: any[]) => {
-  if (!studies) return { data: [], unknownYearCount: 0 };
+  if (!studies || studies.length === 0) {
+    return { data: [], unknownYearCount: 0 };
+  }
   
-  // Extract years from citations and count studies per year
-  const yearCounts: { [key: string]: { studies: number; samples: number } } = {};
-  const currentYear = new Date().getFullYear().toString();
+  // Extract years and count studies per year
+  const yearCounts: { [key: number]: { studies: number; samples: number } } = {};
   
   studies.forEach((study: any) => {
-    let year: string | null = null;
-    
-    // Try to extract year from citation first
-    if (study.citation) {
-      const yearMatch = study.citation.match(/\b(19|20)\d{2}\b/);
-      if (yearMatch) {
-        year = yearMatch[0];
-      }
-    }
-    
-    // If no year from citation, try from name
-    if (!year && study.name) {
-      const yearMatch = study.name.match(/\b(19|20)\d{2}\b/);
-      if (yearMatch) {
-        year = yearMatch[0];
-      }
-    }
-    
-    // If no year from name, try from studyId
-    if (!year && study.studyId) {
-      const yearMatch = study.studyId.match(/\b(19|20)\d{2}\b/);
-      if (yearMatch) {
-        year = yearMatch[0];
-      }
-    }
-    
-    // If still no year found, check for special patterns in study name
-    if (!year && study.name) {
-      const studyName = study.name.toLowerCase();
-      if (studyName.includes('tcga') && studyName.includes('firehose legacy')) {
-        year = '2011';
-      } else if (studyName.includes('target') && studyName.includes('gdc')) {
-        year = '2024';
-      } else if (studyName.includes('tcga') && studyName.includes('gdc')) {
-        year = '2024';
-      } else if (studyName.includes('cptac') && studyName.includes('gdc')) {
-        year = '2024';
-      }
-    }
-    
-    // If still no year found, assign to current year instead of skipping
-    if (!year) {
-      year = currentYear;
-    }
+    const year = extractYearFromStudy(study);
     
     if (!yearCounts[year]) {
       yearCounts[year] = { studies: 0, samples: 0 };
@@ -61,87 +27,140 @@ export const processCumulativeGrowthData = (studies: any[]) => {
   });
   
   // Convert to array and sort by year
-  const sortedYears = Object.keys(yearCounts).sort((a, b) => {
-    return parseInt(a) - parseInt(b);
-  });
+  const sortedYears = Object.keys(yearCounts)
+    .map(Number)
+    .sort((a, b) => a - b);
   
   // Calculate cumulative values
   let cumulativeStudies = 0;
   let cumulativeSamples = 0;
   
-  const data = sortedYears.map(year => {
-    cumulativeStudies += yearCounts[year].studies;
-    cumulativeSamples += yearCounts[year].samples;
-    
-    return {
-      year: parseInt(year),
-      cumulativeStudies,
-      cumulativeSamples
-    };
-  }).filter(item => item.year >= 2011); // Start from 2011 to match the reference chart
+  const data = sortedYears
+    .map(year => {
+      cumulativeStudies += yearCounts[year].studies;
+      cumulativeSamples += yearCounts[year].samples;
+      
+      return {
+        year,
+        cumulativeStudies,
+        cumulativeSamples
+      };
+    })
+    .filter(item => item.year >= YEAR_CONSTANTS.MIN_YEAR); // Start from MIN_YEAR
   
-  return { data, unknownYearCount: 0 }; // Always return 0 since we include all studies now
+  logger.log("Processed cumulative growth data:", data.length, "data points");
+  
+  // Always return 0 for unknownYearCount since we assign all studies to years
+  return { data, unknownYearCount: 0 };
 };
 
+/**
+ * Status stage definitions and mappings
+ */
+const STATUS_STAGES = [
+  'Awaiting Review',
+  'Initial Review',
+  'Approved for Portal Curation',
+  'Curation in Progress',
+  'Final Review',
+  'Preparing for Release',
+  'Released'
+] as const;
+
+/**
+ * Map a status string to a standard stage
+ * @param status - Status string to map
+ * @returns Standard stage name
+ */
+const mapStatusToStage = (status: string): string => {
+  const lowerStatus = status.toLowerCase();
+  
+  if (status === 'Submission' || status === 'Awaiting Review') {
+    return 'Awaiting Review';
+  }
+  
+  if (status === 'Initial Review') {
+    return 'Initial Review';
+  }
+  
+  if (status === 'Approved for Portal Curation' || status === 'Approved for Portal') {
+    return 'Approved for Portal Curation';
+  }
+  
+  if (
+    status === 'Curation in Progress' ||
+    status === 'Clarification Needed' ||
+    status === 'Changes Requested' ||
+    status === 'Awaiting Submitters Response'
+  ) {
+    return 'Curation in Progress';
+  }
+  
+  if (status === 'Final Review' || status === 'Under Review' || status === 'In Review') {
+    return 'Final Review';
+  }
+  
+  if (status === 'Preparing for Release' || status === 'Import in Progress') {
+    return 'Preparing for Release';
+  }
+  
+  if (status === 'Released' || status === 'In Portal') {
+    return 'Released';
+  }
+  
+  // For any unmapped statuses, try to categorize them
+  if (lowerStatus.includes('released') || lowerStatus.includes('portal')) {
+    return 'Released';
+  }
+  
+  if (lowerStatus.includes('review')) {
+    return 'Final Review';
+  }
+  
+  if (lowerStatus.includes('progress') || lowerStatus.includes('curation')) {
+    return 'Curation in Progress';
+  }
+  
+  // Default to Awaiting Review
+  return 'Awaiting Review';
+};
+
+/**
+ * Process tracker status data from papers and pull requests
+ * @param trackerPapers - Array of paper submissions
+ * @param trackerData - Array of data submissions
+ * @returns Array of status counts
+ */
 export const processTrackerStatusData = (trackerPapers: any[], trackerData: any[]) => {
   const allSubmissions = [...trackerPapers, ...trackerData];
   const statusCounts: { [key: string]: number } = {};
 
-  // Define the order of stages as they appear in the submission progress
-  const stageOrder = [
-    'Awaiting Review',
-    'Initial Review', 
-    'Approved for Portal Curation',
-    'Curation in Progress',
-    'Final Review',
-    'Preparing for Release',
-    'Released'
-  ];
-
   // Initialize all stages with 0 count
-  stageOrder.forEach(stage => {
+  STATUS_STAGES.forEach(stage => {
     statusCounts[stage] = 0;
   });
 
   allSubmissions.forEach((submission: any) => {
     const status = submission.status || '';
-    
-    // Map various status variations to the standard stages
-    if (status === 'Submission' || status === 'Awaiting Review') {
-      statusCounts['Awaiting Review']++;
-    } else if (status === 'Initial Review') {
-      statusCounts['Initial Review']++;
-    } else if (status === 'Approved for Portal Curation' || status === 'Approved for Portal') {
-      statusCounts['Approved for Portal Curation']++;
-    } else if (status === 'Curation in Progress' || status === 'Clarification Needed' || 
-               status === 'Changes Requested' || status === 'Awaiting Submitters Response') {
-      statusCounts['Curation in Progress']++;
-    } else if (status === 'Final Review' || status === 'Under Review' || status === 'In Review') {
-      statusCounts['Final Review']++;
-    } else if (status === 'Preparing for Release' || status === 'Import in Progress') {
-      statusCounts['Preparing for Release']++;
-    } else if (status === 'Released' || status === 'In Portal') {
-      statusCounts['Released']++;
-    } else {
-      // For any unmapped statuses, try to categorize them
-      const lowerStatus = status.toLowerCase();
-      if (lowerStatus.includes('released') || lowerStatus.includes('portal')) {
-        statusCounts['Released']++;
-      } else if (lowerStatus.includes('review')) {
-        statusCounts['Final Review']++;
-      } else if (lowerStatus.includes('progress') || lowerStatus.includes('curation')) {
-        statusCounts['Curation in Progress']++;
-      } else {
-        statusCounts['Awaiting Review']++;
-      }
-    }
+    const stage = mapStatusToStage(status);
+    statusCounts[stage]++;
   });
 
-  return stageOrder
+  const result = STATUS_STAGES
     .map(stage => ({ name: stage, count: statusCounts[stage] }))
     .filter(item => item.count > 0); // Only show stages that have submissions
+  
+  logger.log("Processed tracker status data:", result.length, "stages with submissions");
+  
+  return result;
 };
 
+/**
+ * Process submission timeline data
+ * @param trackerPapers - Array of paper submissions
+ * @param trackerData - Array of data submissions
+ * @returns Array of monthly submission data
+ */
 export const processSubmissionTimeline = (trackerPapers: any[], trackerData: any[]) => {
   const allSubmissions = [...trackerPapers, ...trackerData];
   const monthlyData: any = {};
@@ -152,11 +171,11 @@ export const processSubmissionTimeline = (trackerPapers: any[], trackerData: any
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       
       if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = { 
-          month: monthKey, 
-          papers: 0, 
-          datasets: 0, 
-          total: 0 
+        monthlyData[monthKey] = {
+          month: monthKey,
+          papers: 0,
+          datasets: 0,
+          total: 0
         };
       }
       
@@ -169,13 +188,24 @@ export const processSubmissionTimeline = (trackerPapers: any[], trackerData: any
     }
   });
 
-  return Object.values(monthlyData)
+  const result = Object.values(monthlyData)
     .sort((a: any, b: any) => a.month.localeCompare(b.month))
     .slice(-12); // Last 12 months
+  
+  logger.log("Processed submission timeline:", result.length, "months");
+  
+  return result;
 };
 
+/**
+ * Process studies data for chart visualization
+ * @param studies - Array of study objects
+ * @returns Array of cancer type counts
+ */
 export const processStudiesData = (studies: any[]) => {
-  if (!studies) return [];
+  if (!studies || studies.length === 0) {
+    return [];
+  }
   
   const typeGroups = studies.reduce((acc: any, study: any) => {
     const type = study.cancerType?.name || 'Unknown';
@@ -186,14 +216,25 @@ export const processStudiesData = (studies: any[]) => {
     return acc;
   }, {});
 
-  return Object.entries(typeGroups)
+  const result = Object.entries(typeGroups)
     .map(([name, count]) => ({ name, count: count as number }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
+  
+  logger.log("Processed studies data:", result.length, "cancer types");
+  
+  return result;
 };
 
+/**
+ * Process cancer types data for chart visualization
+ * @param cancerTypes - Array of cancer type objects
+ * @returns Array of parent type groups
+ */
 export const processCancerTypesData = (cancerTypes: any[]) => {
-  if (!cancerTypes) return [];
+  if (!cancerTypes || cancerTypes.length === 0) {
+    return [];
+  }
   
   const parentGroups = cancerTypes.reduce((acc: any, type: any) => {
     const parent = type.parent || 'Other';
@@ -204,14 +245,25 @@ export const processCancerTypesData = (cancerTypes: any[]) => {
     return acc;
   }, {});
 
-  return Object.entries(parentGroups)
+  const result = Object.entries(parentGroups)
     .map(([name, value]) => ({ name, value: value as number }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 8);
+  
+  logger.log("Processed cancer types data:", result.length, "parent groups");
+  
+  return result;
 };
 
+/**
+ * Process cancer types by parent for detailed breakdown
+ * @param cancerTypes - Array of cancer type objects
+ * @returns Array of cancer type counts
+ */
 export const processCancerTypesByParent = (cancerTypes: any[]) => {
-  if (!cancerTypes) return [];
+  if (!cancerTypes || cancerTypes.length === 0) {
+    return [];
+  }
   
   const nameGroups = cancerTypes.reduce((acc: any, type: any) => {
     const name = type.name || 'Other';
@@ -222,11 +274,21 @@ export const processCancerTypesByParent = (cancerTypes: any[]) => {
     return acc;
   }, {});
 
-  return Object.entries(nameGroups)
+  const result = Object.entries(nameGroups)
     .map(([name, count]) => ({ name, count: count as number }))
     .sort((a, b) => b.count - a.count);
+  
+  logger.log("Processed cancer types by parent:", result.length, "types");
+  
+  return result;
 };
 
+/**
+ * Process completion rates for submissions
+ * @param trackerPapers - Array of paper submissions
+ * @param trackerData - Array of data submissions
+ * @returns Array of completion rate data
+ */
 export const processCompletionRates = (trackerPapers: any[], trackerData: any[]) => {
   const statusCounts = {
     total: trackerPapers.length + trackerData.length,
@@ -246,131 +308,125 @@ export const processCompletionRates = (trackerPapers: any[], trackerData: any[])
     }
   });
 
-  const releasedRate = statusCounts.total > 0 ? ((statusCounts.released / statusCounts.total) * 100).toFixed(1) : '0';
-  const inProgressRate = statusCounts.total > 0 ? ((statusCounts.inProgress / statusCounts.total) * 100).toFixed(1) : '0';
-  const notCuratableRate = statusCounts.total > 0 ? ((statusCounts.notCuratable / statusCounts.total) * 100).toFixed(1) : '0';
+  const releasedRate = statusCounts.total > 0 
+    ? ((statusCounts.released / statusCounts.total) * 100).toFixed(1) 
+    : '0';
+  const inProgressRate = statusCounts.total > 0 
+    ? ((statusCounts.inProgress / statusCounts.total) * 100).toFixed(1) 
+    : '0';
+  const notCuratableRate = statusCounts.total > 0 
+    ? ((statusCounts.notCuratable / statusCounts.total) * 100).toFixed(1) 
+    : '0';
 
-  return [
+  const result = [
     { name: 'Released', value: parseFloat(releasedRate), count: statusCounts.released },
     { name: 'In Progress', value: parseFloat(inProgressRate), count: statusCounts.inProgress },
     { name: 'Not Curatable', value: parseFloat(notCuratableRate), count: statusCounts.notCuratable }
   ];
+  
+  logger.log("Processed completion rates:", result);
+  
+  return result;
 };
 
-export const processSampleCountsByDataType = (sampleLists: any[], studies: any[], year: number) => {
-  if (!sampleLists || !studies) return [];
+/**
+ * All possible data types for sample counts
+ */
+const ALL_DATA_TYPES = [
+  'Sequenced',
+  'CNA',
+  'mRNA (RNA Seq)',
+  'mRNA (Microarray)',
+  'miRNA',
+  'Methylation',
+  'RPPA',
+  'Other'
+] as const;
+
+/**
+ * Extract data type from sample list ID
+ * @param sampleListId - Sample list identifier
+ * @returns Data type name
+ */
+const extractDataType = (sampleListId: string): string => {
+  const id = sampleListId.toLowerCase();
   
-  // Create a map of study years using the same logic as cumulative growth
-  const studyYearMap: { [key: string]: string } = {};
+  if (id.includes('sequenced')) return 'Sequenced';
+  if (id.includes('cna')) return 'CNA';
+  if (id.includes('rna_seq_v2') || id.includes('rna_seq')) return 'mRNA (RNA Seq)';
+  if (id.includes('mrna')) return 'mRNA (Microarray)';
+  if (id.includes('mirna')) return 'miRNA';
+  if (id.includes('methylation')) return 'Methylation';
+  if (id.includes('rppa')) return 'RPPA';
+  
+  return 'Other';
+};
+
+/**
+ * Extract sample count from description field
+ * @param description - Sample list description
+ * @returns Sample count or 0
+ */
+const extractSampleCount = (description: string): number => {
+  if (!description) return 0;
+  
+  const sampleCountMatch = description.match(/(\d+)\s+samples?/i);
+  return sampleCountMatch ? parseInt(sampleCountMatch[1]) : 0;
+};
+
+/**
+ * Process sample counts by data type for a specific year
+ * @param sampleLists - Array of sample list objects
+ * @param studies - Array of study objects
+ * @param year - Year to filter by
+ * @returns Array of data type counts
+ */
+export const processSampleCountsByDataType = (
+  sampleLists: any[],
+  studies: any[],
+  year: number
+) => {
+  if (!sampleLists || !studies) {
+    return [];
+  }
+  
+  // Create a map of study years using the year extraction utility
+  const studyYearMap: { [key: string]: number } = {};
   
   studies.forEach((study: any) => {
-    let studyYear: string | null = null;
-    
-    // Try to extract year from citation first
-    if (study.citation) {
-      const yearMatch = study.citation.match(/\b(19|20)\d{2}\b/);
-      if (yearMatch) {
-        studyYear = yearMatch[0];
-      }
-    }
-    
-    // If no year from citation, try from name
-    if (!studyYear && study.name) {
-      const yearMatch = study.name.match(/\b(19|20)\d{2}\b/);
-      if (yearMatch) {
-        studyYear = yearMatch[0];
-      }
-    }
-    
-    // If no year from name, try from studyId
-    if (!studyYear && study.studyId) {
-      const yearMatch = study.studyId.match(/\b(19|20)\d{2}\b/);
-      if (yearMatch) {
-        studyYear = yearMatch[0];
-      }
-    }
-    
-    // If still no year found, check for special patterns in study name
-    if (!studyYear && study.name) {
-      const studyName = study.name.toLowerCase();
-      if (studyName.includes('tcga') && studyName.includes('firehose legacy')) {
-        studyYear = '2011';
-      } else if (studyName.includes('target') && studyName.includes('gdc')) {
-        studyYear = '2024';
-      } else if (studyName.includes('tcga') && studyName.includes('gdc')) {
-        studyYear = '2024';
-      } else if (studyName.includes('cptac') && studyName.includes('gdc')) {
-        studyYear = '2024';
-      }
-    }
-    
-    if (studyYear) {
-      studyYearMap[study.studyId] = studyYear;
-    }
+    const studyYear = extractYearFromStudy(study);
+    studyYearMap[study.studyId] = studyYear;
   });
-  
-  // Define all possible data types to ensure consistent display (merged mRNA RNA Seq types)
-  const allDataTypes = [
-    'Sequenced',
-    'CNA',
-    'mRNA (RNA Seq)',
-    'mRNA (Microarray)',
-    'miRNA',
-    'Methylation',
-    'RPPA',
-    'Other'
-  ];
   
   // Initialize all data types with 0 count
   const dataTypeCounts: { [key: string]: number } = {};
-  allDataTypes.forEach(type => {
+  ALL_DATA_TYPES.forEach(type => {
     dataTypeCounts[type] = 0;
   });
   
-  // Filter sample lists by year and extract sample counts from description
+  // Filter sample lists by year and aggregate counts
   sampleLists.forEach((sampleList: any) => {
     const studyId = sampleList.studyId;
     const studyYear = studyYearMap[studyId];
     
-    if (studyYear && parseInt(studyYear) === year) {
-      // Extract sample count from description field using regex
-      let sampleCount = 0;
-      if (sampleList.description) {
-        const sampleCountMatch = sampleList.description.match(/(\d+)\s+samples?/i);
-        if (sampleCountMatch) {
-          sampleCount = parseInt(sampleCountMatch[1]);
-        }
-      }
+    if (studyYear === year) {
+      const sampleCount = extractSampleCount(sampleList.description);
       
       // Only process if we found a sample count
       if (sampleCount > 0) {
         const sampleListId = sampleList.sampleListId || '';
-        
-        // Extract data type from sampleListId (merge RNA Seq V2 with RNA Seq)
-        let dataType = 'Other';
-        if (sampleListId.includes('sequenced')) {
-          dataType = 'Sequenced';
-        } else if (sampleListId.includes('cna')) {
-          dataType = 'CNA';
-        } else if (sampleListId.includes('rna_seq_v2') || sampleListId.includes('rna_seq')) {
-          dataType = 'mRNA (RNA Seq)';
-        } else if (sampleListId.includes('mrna')) {
-          dataType = 'mRNA (Microarray)';
-        } else if (sampleListId.includes('mirna')) {
-          dataType = 'miRNA';
-        } else if (sampleListId.includes('methylation')) {
-          dataType = 'Methylation';
-        } else if (sampleListId.includes('rppa')) {
-          dataType = 'RPPA';
-        }
-        
+        const dataType = extractDataType(sampleListId);
         dataTypeCounts[dataType] += sampleCount;
       }
     }
   });
   
-  // Return all data types, even those with 0 counts
-  return allDataTypes
+  // Return all data types, sorted by count
+  const result = ALL_DATA_TYPES
     .map(dataType => ({ name: dataType, count: dataTypeCounts[dataType] }))
     .sort((a, b) => b.count - a.count);
+  
+  logger.log("Processed sample counts by data type for year", year, ":", result.length, "types");
+  
+  return result;
 };

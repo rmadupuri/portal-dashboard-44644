@@ -1,26 +1,26 @@
-
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import SharedLayout from "@/components/SharedLayout";
 import { 
   fetchCancerStudies, 
-  fetchCancerTypes, 
-  fetchCancerTypesCount,
-  fetchPatients,
+  fetchCancerTypes,
   fetchSamples,
-  fetchSamplesByType,
   fetchSampleLists
 } from "@/services/cbioportalApi";
-import { parseIssuesData, parsePullRequestsData, parseSampleCountData } from "@/utils/dataParser";
+import { 
+  parseIssuesData, 
+  parsePullRequestsData, 
+  parseSampleCountData,
+  parseSamplesByDataType 
+} from "@/utils/dataParser";
 import {
   processCumulativeGrowthData,
   processTrackerStatusData,
-  processSubmissionTimeline,
-  processStudiesData,
-  processCancerTypesData,
-  processCompletionRates,
   processSampleCountsByDataType
 } from "@/utils/analyticsDataProcessors";
+import { getAvailableYears } from "@/utils/yearExtractor";
+import { logger } from "@/utils/logger";
 
 // Import components
 import StatisticsCards from "@/components/analytics/StatisticsCards";
@@ -36,57 +36,64 @@ import pullRequestsData from "@/data/pull_requests.txt?raw";
 import sampleCountCancerTypeData from "@/data/Sample_count_cancer_type.csv?raw";
 import sampleCountByDataTypeData from "@/data/Sample_count_by_Data_Type.csv?raw";
 
+/**
+ * Format the current date and time for display
+ */
+const formatLastUpdated = (): string => {
+  const now = new Date();
+  const formattedDate = now.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  const formattedTime = now.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+  return `${formattedDate} at ${formattedTime}`;
+};
+
 const Analytics = () => {
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<number>(2024);
+  const [dataError, setDataError] = useState<boolean>(false);
 
   // Set last updated time when component mounts
   useEffect(() => {
-    const now = new Date();
-    const formattedDate = now.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-    const formattedTime = now.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-    setLastUpdated(`${formattedDate} at ${formattedTime}`);
+    setLastUpdated(formatLastUpdated());
   }, []);
 
   // Parse CSV data for samples by cancer type
-  const samplesByCancerType = parseSampleCountData(sampleCountCancerTypeData);
+  const samplesByCancerType = useMemo(() => {
+    try {
+      return parseSampleCountData(sampleCountCancerTypeData);
+    } catch (error) {
+      logger.error("Error parsing sample count cancer type data:", error);
+      toast.error("Failed to load cancer type data");
+      return [];
+    }
+  }, []);
 
-  // Parse CSV data for samples by data type
-  const parseSamplesByDataTypeData = (csvData: string) => {
-    const lines = csvData.trim().split('\n');
-    
-    return lines.slice(1).map(line => {
-      const values = line.split(',').map(v => v.replace(/"/g, ''));
-      return {
-        name: values[0],
-        count: parseInt(values[1])
-      };
-    }).filter(item => item.count > 0);
-  };
+  // Parse tracker data with error handling
+  const { trackerPapers, trackerData } = useMemo(() => {
+    let papers: any[] = [];
+    let data: any[] = [];
 
-  const samplesByDataType = parseSamplesByDataTypeData(sampleCountByDataTypeData);
+    try {
+      papers = parseIssuesData(issuesData);
+      data = parsePullRequestsData(pullRequestsData);
+    } catch (error) {
+      logger.error("Error parsing tracker data:", error);
+      toast.error("Failed to load submission tracker data");
+      setDataError(true);
+    }
 
-  // Parse tracker data
-  let trackerPapers: any[] = [];
-  let trackerData: any[] = [];
+    return { trackerPapers: papers, trackerData: data };
+  }, []);
 
-  try {
-    trackerPapers = parseIssuesData(issuesData);
-    trackerData = parsePullRequestsData(pullRequestsData);
-  } catch (error) {
-    console.error("Error parsing tracker data:", error);
-  }
-
-  // Fetch cBioPortal data
-  const { data: studies, isLoading: studiesLoading } = useQuery({
+  // Fetch cBioPortal data with error handling
+  const { data: studies, isLoading: studiesLoading, error: studiesError } = useQuery({
     queryKey: ['cancer-studies'],
     queryFn: fetchCancerStudies,
   });
@@ -96,24 +103,9 @@ const Analytics = () => {
     queryFn: fetchCancerTypes,
   });
 
-  const { data: cancerTypesCount, isLoading: typesCountLoading } = useQuery({
-    queryKey: ['cancer-types-count'],
-    queryFn: fetchCancerTypesCount,
-  });
-
-  const { data: patients, isLoading: patientsLoading } = useQuery({
-    queryKey: ['patients'],
-    queryFn: fetchPatients,
-  });
-
   const { data: samples, isLoading: samplesLoading } = useQuery({
     queryKey: ['samples'],
     queryFn: fetchSamples,
-  });
-
-  const { data: samplesByType, isLoading: samplesByTypeLoading } = useQuery({
-    queryKey: ['samples-by-type'],
-    queryFn: fetchSamplesByType,
   });
 
   const { data: sampleLists, isLoading: sampleListsLoading } = useQuery({
@@ -121,14 +113,22 @@ const Analytics = () => {
     queryFn: fetchSampleLists,
   });
 
+  // Show error toast if studies fail to load
+  useEffect(() => {
+    if (studiesError) {
+      logger.error("Error fetching studies:", studiesError);
+      toast.error("Failed to load study data from cBioPortal");
+    }
+  }, [studiesError]);
+
   // Calculate unique cancer types from studies (excluding mixed type)
-  const uniqueCancerTypesFromStudies = React.useMemo(() => {
+  const uniqueCancerTypesFromStudies = useMemo(() => {
     if (!studies) return 0;
     
     const uniqueCancerTypeIds = new Set(
       studies
-        .filter(study => study.cancerTypeId && study.cancerTypeId !== 'mixed')
-        .map(study => study.cancerTypeId)
+        .filter((study: any) => study.cancerTypeId && study.cancerTypeId !== 'mixed')
+        .map((study: any) => study.cancerTypeId)
     );
     
     return uniqueCancerTypeIds.size;
@@ -138,57 +138,50 @@ const Analytics = () => {
   const totalSamples = samples || 0;
 
   // Process data for charts
-  const studiesChartData = processStudiesData(studies || []);
-  const cancerTypesChartData = processCancerTypesData(cancerTypes || []);
-  const trackerStatusData = processTrackerStatusData(trackerPapers, trackerData);
-  const submissionTimelineData = processSubmissionTimeline(trackerPapers, trackerData);
-  const completionRateData = processCompletionRates(trackerPapers, trackerData);
-  const { data: cumulativeGrowthData, unknownYearCount } = processCumulativeGrowthData(studies || []);
+  const trackerStatusData = useMemo(() => {
+    return processTrackerStatusData(trackerPapers, trackerData);
+  }, [trackerPapers, trackerData]);
 
-  // Process sample counts by data type for the selected year
-  const sampleCountsByDataType = processSampleCountsByDataType(sampleLists || [], studies || [], selectedYear);
-
-  // Get available years from studies
-  const availableYears = React.useMemo(() => {
-    if (!studies) return [2024];
-    
-    const years = new Set<number>();
-    studies.forEach((study: any) => {
-      let year: number | null = null;
-      
-      // Try to extract year from citation first
-      if (study.citation) {
-        const yearMatch = study.citation.match(/\b(19|20)\d{2}\b/);
-        if (yearMatch) {
-          year = parseInt(yearMatch[0]);
-        }
-      }
-      
-      // If no year from citation, try from name
-      if (!year && study.name) {
-        const yearMatch = study.name.match(/\b(19|20)\d{2}\b/);
-        if (yearMatch) {
-          year = parseInt(yearMatch[0]);
-        }
-      }
-      
-      // If no year from name, try from studyId
-      if (!year && study.studyId) {
-        const yearMatch = study.studyId.match(/\b(19|20)\d{2}\b/);
-        if (yearMatch) {
-          year = parseInt(yearMatch[0]);
-        }
-      }
-      
-      if (year && year >= 2011) {
-        years.add(year);
-      }
-    });
-    
-    return Array.from(years).sort((a, b) => b - a);
+  const { data: cumulativeGrowthData, unknownYearCount } = useMemo(() => {
+    return processCumulativeGrowthData(studies || []);
   }, [studies]);
 
-  const isLoading = studiesLoading || typesLoading || samplesLoading || typesCountLoading || samplesByTypeLoading || sampleListsLoading;
+  // Process sample counts by data type for the selected year
+  const sampleCountsByDataType = useMemo(() => {
+    return processSampleCountsByDataType(sampleLists || [], studies || [], selectedYear);
+  }, [sampleLists, studies, selectedYear]);
+
+  // Get available years from studies using utility
+  const availableYears = useMemo(() => {
+    if (!studies) return [2024];
+    return getAvailableYears(studies);
+  }, [studies]);
+
+  const isLoading = studiesLoading || typesLoading || samplesLoading || sampleListsLoading;
+
+  // Show error state if critical data failed to load
+  if (dataError && !studies) {
+    return (
+      <SharedLayout>
+        <div className="container mx-auto px-6 py-8 bg-gray-50 min-h-screen">
+          <div className="max-w-6xl mx-auto">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+              <h2 className="text-2xl font-bold text-red-800 mb-2">Unable to Load Analytics Data</h2>
+              <p className="text-red-600 mb-4">
+                There was an error loading the analytics data. Please try refreshing the page.
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Refresh Page
+              </button>
+            </div>
+          </div>
+        </div>
+      </SharedLayout>
+    );
+  }
 
   return (
     <SharedLayout>

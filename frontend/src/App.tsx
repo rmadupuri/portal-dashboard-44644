@@ -1,12 +1,13 @@
-
 import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import ProtectedRoute from "./components/ProtectedRoute";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
+import AuthCallback from "./pages/AuthCallback";
 import SubmitContent from "./pages/SubmitContent";
 import TrackStatus from "./pages/TrackStatus";
 import Analytics from "./pages/Analytics";
@@ -23,7 +24,18 @@ const App: React.FC = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/submit" element={<SubmitContent />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          
+          {/* Protected Route - Requires Login */}
+          <Route 
+            path="/submit" 
+            element={
+              <ProtectedRoute>
+                <SubmitContent />
+              </ProtectedRoute>
+            } 
+          />
+          
           <Route path="/track-status" element={<TrackStatus />} />
           <Route path="/analytics" element={<Analytics />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
