@@ -89,7 +89,7 @@ const SubmitContent = () => {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const navigate = useNavigate();
-  
+
   const form = useForm<FormValues>({
     defaultValues: {
       publicationType: "published",
@@ -117,7 +117,7 @@ const SubmitContent = () => {
       privateAccessEmails: "",
     },
   });
-  
+
   const canContactEmail = form.watch("canContactEmail");
   const isDataTransformed = form.watch("isDataTransformed");
   const dataTypes = form.watch("dataTypes");
@@ -125,7 +125,7 @@ const SubmitContent = () => {
   const isLeadAuthor = form.watch("isLeadAuthor");
   const wantsToHelpCurate = form.watch("wantsToHelpCurate");
   const sharingPreference = form.watch("sharingPreference");
-  
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setFiles(Array.from(e.target.files));
@@ -150,29 +150,28 @@ const SubmitContent = () => {
       toast.error("Please provide an alternative contact email");
       return;
     }
-    
+
     setIsSubmitting(true);
-    
+
     try {
-      // Simulate API call with a delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Set success message based on action type
+      // Call actual API
       if (data.actionType === "suggest-paper") {
+        await submitPaperSuggestion(data, files);
         setSuccessMessage("Your paper suggestion has been submitted successfully!");
       } else {
+        await submitCuratedData(data, files);
         setSuccessMessage("Your data has been submitted successfully!");
       }
-      
+
       // Show success modal
       setShowSuccessModal(true);
-      
+
       // Reset form
       form.reset();
       setFiles([]);
       setPublicationType("published");
       setActionType("suggest-paper");
-      
+
       // Redirect to track status page with appropriate tab after showing modal
       setTimeout(() => {
         setShowSuccessModal(false);
@@ -182,7 +181,7 @@ const SubmitContent = () => {
           navigate("/track-status?tab=submitted-data");
         }
       }, 3000);
-      
+
     } catch (error) {
       // Show error message
       toast.error("Failed to submit");
@@ -261,10 +260,10 @@ const SubmitContent = () => {
           {/* Main Form Card */}
           <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-100">
             <div className="p-6 md:p-8">
-              
+
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-                  
+
                   {/* Section 1: Publication Type Selection */}
                   <div>
                     <h2 className="text-lg font-semibold mb-4 text-gray-800">1. What type of study are you submitting?</h2>
@@ -273,21 +272,19 @@ const SubmitContent = () => {
                       onValueChange={handlePublicationTypeChange}
                       className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                     >
-                      <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${
-                        publicationType === "published" 
-                          ? "border-blue-500 bg-blue-50" 
-                          : "border-gray-200 hover:border-gray-300 bg-white"
-                      }`}>
+                      <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${publicationType === "published"
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 hover:border-gray-300 bg-white"
+                        }`}>
                         <RadioGroupItem value="published" id="published" className="h-5 w-5" />
                         <Label htmlFor="published" className="font-medium text-base cursor-pointer text-gray-700 flex-1">
                           Published Paper
                         </Label>
                       </div>
-                      <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${
-                        publicationType === "preprint" 
-                          ? "border-blue-500 bg-blue-50" 
-                          : "border-gray-200 hover:border-gray-300 bg-white"
-                      }`}>
+                      <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${publicationType === "preprint"
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 hover:border-gray-300 bg-white"
+                        }`}>
                         <RadioGroupItem value="preprint" id="preprint" className="h-5 w-5" />
                         <Label htmlFor="preprint" className="font-medium text-base cursor-pointer text-gray-700 flex-1">
                           Pre-publication
@@ -305,21 +302,19 @@ const SubmitContent = () => {
                         onValueChange={handleActionTypeChange}
                         className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                       >
-                        <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${
-                          actionType === "suggest-paper" 
-                            ? "border-blue-500 bg-blue-50" 
-                            : "border-gray-200 hover:border-gray-300 bg-white"
-                        }`}>
+                        <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${actionType === "suggest-paper"
+                          ? "border-blue-500 bg-blue-50"
+                          : "border-gray-200 hover:border-gray-300 bg-white"
+                          }`}>
                           <RadioGroupItem value="suggest-paper" id="suggest-paper" />
                           <Label htmlFor="suggest-paper" className="font-medium cursor-pointer text-gray-700 flex-1">
                             Suggest Paper for Curation
                           </Label>
                         </div>
-                        <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${
-                          actionType === "submit-data" 
-                            ? "border-blue-500 bg-blue-50" 
-                            : "border-gray-200 hover:border-gray-300 bg-white"
-                        }`}>
+                        <div className={`flex items-center space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${actionType === "submit-data"
+                          ? "border-blue-500 bg-blue-50"
+                          : "border-gray-200 hover:border-gray-300 bg-white"
+                          }`}>
                           <RadioGroupItem value="submit-data" id="submit-data" />
                           <Label htmlFor="submit-data" className="font-medium cursor-pointer text-gray-700 flex-1">
                             Submit Formatted Data
@@ -343,21 +338,19 @@ const SubmitContent = () => {
                               onValueChange={field.onChange}
                               className="space-y-3"
                             >
-                              <div className={`flex items-start space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${
-                                field.value === "public"
-                                  ? "border-blue-500 bg-blue-50"
-                                  : "border-gray-200 hover:border-gray-300 bg-white"
-                              }`}>
+                              <div className={`flex items-start space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${field.value === "public"
+                                ? "border-blue-500 bg-blue-50"
+                                : "border-gray-200 hover:border-gray-300 bg-white"
+                                }`}>
                                 <RadioGroupItem value="public" id="public" className="mt-1" />
                                 <Label htmlFor="public" className="text-gray-700 cursor-pointer font-normal leading-snug flex-1">
                                   Make it publicly available
                                 </Label>
                               </div>
-                              <div className={`flex items-start space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${
-                                field.value === "private"
-                                  ? "border-blue-500 bg-blue-50"
-                                  : "border-gray-200 hover:border-gray-300 bg-white"
-                              }`}>
+                              <div className={`flex items-start space-x-3 p-4 rounded-lg border-2 transition-all cursor-pointer ${field.value === "private"
+                                ? "border-blue-500 bg-blue-50"
+                                : "border-gray-200 hover:border-gray-300 bg-white"
+                                }`}>
                                 <RadioGroupItem value="private" id="private" className="mt-1" />
                                 <Label htmlFor="private" className="text-gray-700 cursor-pointer font-normal leading-snug flex-1">
                                   Keep it private for now (review in private cBioPortal)
@@ -672,9 +665,9 @@ const SubmitContent = () => {
                                       <p className="font-medium mb-1">Great! Here's how to get started:</p>
                                       <p>
                                         Review the{" "}
-                                        <a 
-                                          href="https://docs.cbioportal.org/file-formats/" 
-                                          target="_blank" 
+                                        <a
+                                          href="https://docs.cbioportal.org/file-formats/"
+                                          target="_blank"
                                           rel="noopener noreferrer"
                                           className="text-blue-700 hover:text-blue-900 underline font-medium inline-flex items-center"
                                         >
@@ -713,7 +706,7 @@ const SubmitContent = () => {
                             </FormItem>
                           )}
                         />
-                        
+
                         <FormField
                           control={form.control}
                           name="description"
@@ -761,9 +754,9 @@ const SubmitContent = () => {
                             <FormItem>
                               <FormLabel className="text-gray-700">
                                 Is the data transformed according to cBioPortal file formats?{" "}
-                                <a 
-                                  href="https://docs.cbioportal.org/file-formats/" 
-                                  target="_blank" 
+                                <a
+                                  href="https://docs.cbioportal.org/file-formats/"
+                                  target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-blue-600 hover:text-blue-800 inline-flex items-center"
                                 >
@@ -802,7 +795,7 @@ const SubmitContent = () => {
                             </FormItem>
                           )}
                         />
-                        
+
                         {/* Data Types Available for Data Form */}
                         <div>
                           <div className="flex items-center mb-3">
@@ -888,7 +881,7 @@ const SubmitContent = () => {
                             </FormItem>
                           )}
                         />
-                        
+
                         {/* Combined Upload Files or Link to Data Section */}
                         <div>
                           <div className="flex items-center mb-2">
@@ -908,7 +901,7 @@ const SubmitContent = () => {
                               </Tooltip>
                             </TooltipProvider>
                           </div>
-                          
+
                           {/* File Upload Section */}
                           <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-6 mb-4">
                             <div className="flex flex-col items-center justify-center text-center">
@@ -1103,7 +1096,7 @@ const SubmitContent = () => {
                           <FormItem>
                             <FormLabel className="text-gray-700">Name</FormLabel>
                             <FormControl>
-                              <Input 
+                              <Input
                                 placeholder="Enter your name"
                                 className="shadow-sm"
                                 {...field}
@@ -1113,7 +1106,7 @@ const SubmitContent = () => {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="email"
@@ -1146,9 +1139,9 @@ const SubmitContent = () => {
                         Fields marked with <span className="text-red-500">*</span> are required
                       </p>
                     </div>
-                    
-                    <Button 
-                      type="submit" 
+
+                    <Button
+                      type="submit"
                       className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-8 rounded-md transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-base font-medium"
                       disabled={isSubmitDisabled}
                     >

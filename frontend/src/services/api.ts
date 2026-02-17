@@ -1,10 +1,18 @@
 
-const API_BASE_URL = "http://localhost:3003";
+
+const API_BASE_URL = "http://localhost:5001/api";
 
 /**
  * Generic API fetch helper
  */
 const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
+  // Check if we have a token (assuming auth is required as per backend)
+  // But wait, the Quick Start says we need a token.
+  // The frontend likely stores it in localStorage.
+  // We should add Authorization header if token exists.
+
+  const token = localStorage.getItem('token');
+
   const url = `${API_BASE_URL}${endpoint}`;
 
   const isFormData = options.body instanceof FormData;
@@ -14,6 +22,10 @@ const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
   // Only set Content-Type for non-FormData requests
   if (!isFormData) {
     headers["Content-Type"] = "application/json";
+  }
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const response = await fetch(url, {
@@ -38,9 +50,10 @@ const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
 
 /**
  * Submit content form data to backend
+ * (Legacy/Generic function)
  */
 export const submitContent = async (formData: FormData) => {
-  return fetchApi("/submit-content", {
+  return fetchApi("/tracker", {
     method: "POST",
     body: formData,
   });
@@ -49,41 +62,58 @@ export const submitContent = async (formData: FormData) => {
 /**
  * Submit paper suggestion to backend
  */
-export const submitPaperSuggestion = async (data: any, file?: File | null) => {
-  if (file) {
-    const formData = new FormData();
-    formData.append("data", JSON.stringify(data));
-    formData.append("file", file);
+export const submitPaperSuggestion = async (data: any, files?: File[]) => {
+  const payload = { ...data, actionType: 'suggest-paper' };
 
-    return fetchApi("/suggest-paper", {
+  if (files && files.length > 0) {
+    const formData = new FormData();
+    formData.append("data", JSON.stringify(payload));
+    files.forEach((file) => {
+      formData.append("files", file); // key 'files' matches nothing specific but backend uses upload.any()
+    });
+
+    return fetchApi("/tracker", {
       method: "POST",
       body: formData,
     });
   }
 
-  return fetchApi("/suggest-paper", {
+  // Even without file, backend handles JSON body or FormData. 
+  // API helper sets Content-Type: application/json for non-FormData.
+  // But backend 'upload.any()' might behave differently? 
+  // 'upload.any()' parses multipart. If we send JSON, body parser should handle it.
+  // Let's force FormData for consistency since backend logic checks 'req.body.data' string parsing primarily for FormData.
+  // Actually, backend: `let submissionData = req.body;` then checks `req.body.data` string.
+  // If we send JSON, `req.body` IS the data.
+  // So sending JSON is fine.
+
+  return fetchApi("/tracker", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 };
 
 /**
  * Submit curated data to backend
  */
-export const submitCuratedData = async (data: any, file?: File | null) => {
-  if (file) {
-    const formData = new FormData();
-    formData.append("data", JSON.stringify(data));
-    formData.append("supportingFile", file); // must match backend field name
+export const submitCuratedData = async (data: any, files?: File[]) => {
+  const payload = { ...data, actionType: 'submit-data' };
 
-    return fetchApi("/submit-data", {
+  if (files && files.length > 0) {
+    const formData = new FormData();
+    formData.append("data", JSON.stringify(payload));
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
+
+    return fetchApi("/tracker", {
       method: "POST",
       body: formData,
     });
   }
 
-  return fetchApi("/submit-data", {
+  return fetchApi("/tracker", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 };

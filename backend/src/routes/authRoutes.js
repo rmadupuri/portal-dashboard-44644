@@ -40,9 +40,9 @@ router.get('/profile', authenticateToken, async (req, res) => {
  * @access  Public
  */
 router.get('/google',
-  passport.authenticate('google', { 
+  passport.authenticate('google', {
     scope: ['profile', 'email'],
-    session: false 
+    session: false
   })
 );
 
@@ -52,7 +52,7 @@ router.get('/google',
  * @access  Public
  */
 router.get('/google/callback',
-  passport.authenticate('google', { 
+  passport.authenticate('google', {
     session: false,
     failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`
   }),
@@ -74,9 +74,9 @@ router.get('/google/callback',
  * @access  Public
  */
 router.get('/github',
-  passport.authenticate('github', { 
+  passport.authenticate('github', {
     scope: ['user:email'],
-    session: false 
+    session: false
   })
 );
 
@@ -86,7 +86,7 @@ router.get('/github',
  * @access  Public
  */
 router.get('/github/callback',
-  passport.authenticate('github', { 
+  passport.authenticate('github', {
     session: false,
     failureRedirect: `${process.env.FRONTEND_URL}/login?error=github_auth_failed`
   }),
@@ -112,6 +112,47 @@ router.post('/logout', authenticateToken, (req, res) => {
     status: 'success',
     message: 'Logged out successfully. Please remove token from client.'
   });
+});
+
+/**
+ * @route   POST /api/auth/dev-login
+ * @desc    Developer Login (Bypasses OAuth) - DEV ENV ONLY
+ * @access  Public
+ */
+import { findUserByEmail, createUser } from '../db/users.js';
+
+router.post('/dev-login', async (req, res) => {
+  try {
+    const email = 'dev@cbioportal.org';
+    let user = await findUserByEmail(email);
+
+    if (!user) {
+      user = await createUser({
+        email,
+        name: 'Developer User',
+        institution: 'cBioPortal',
+        role: 'super', // Give super access for easy testing
+        provider: 'local',
+        providerId: 'dev_123'
+      });
+    }
+
+    const token = generateToken(user);
+
+    res.json({
+      status: 'success',
+      data: {
+        token,
+        user
+      }
+    });
+  } catch (error) {
+    console.error('Dev login error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to perform dev login'
+    });
+  }
 });
 
 export default router;

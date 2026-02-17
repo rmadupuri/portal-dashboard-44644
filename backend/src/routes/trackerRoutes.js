@@ -8,6 +8,11 @@
 
 import express from 'express';
 import { body, validationResult } from 'express-validator';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
 import {
   createSubmission,
   findSubmissionById,
@@ -24,6 +29,31 @@ import { filterSubmissionByRole, filterSubmissionsByRole } from '../utils/filter
 
 const router = express.Router();
 
+// -- Multer Setup for File Uploads --
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadDir = path.join(__dirname, '../../uploads');
+
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // Sanitize filename and append unique suffix
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_'));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
 /**
  * GET /api/tracker
  * Get all submissions (filtered by user role)
@@ -32,18 +62,18 @@ const router = express.Router();
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { status, cancerType } = req.query;
-    
+
     // Build filters
     const filters = {};
     if (status) filters.status = status;
     if (cancerType) filters.cancerType = cancerType;
-    
+
     // Get all submissions
     const submissions = await getAllSubmissions(filters);
-    
+
     // Filter based on user role
     const filteredSubmissions = filterSubmissionsByRole(submissions, req.user.role);
-    
+
     res.json({
       status: 'success',
       data: {
@@ -68,7 +98,7 @@ router.get('/', authenticateToken, async (req, res) => {
 router.get('/my', authenticateToken, async (req, res) => {
   try {
     const submissions = await getSubmissionsByUserId(req.user.id);
-    
+
     res.json({
       status: 'success',
       data: {
@@ -93,7 +123,7 @@ router.get('/my', authenticateToken, async (req, res) => {
 router.get('/stats', authenticateToken, requireSuper, async (req, res) => {
   try {
     const stats = await getSubmissionStats();
-    
+
     res.json({
       status: 'success',
       data: stats
@@ -114,14 +144,14 @@ router.get('/stats', authenticateToken, requireSuper, async (req, res) => {
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const submission = await findSubmissionById(req.params.id);
-    
+
     if (!submission) {
       return res.status(404).json({
         status: 'error',
         message: 'Submission not found'
       });
     }
-    
+
     // Users can see full details of their own submissions
     // Otherwise filter by role
     let filteredSubmission;
@@ -130,7 +160,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     } else {
       filteredSubmission = filterSubmissionByRole(submission, req.user.role);
     }
-    
+
     res.json({
       status: 'success',
       data: {
@@ -149,37 +179,89 @@ router.get('/:id', authenticateToken, async (req, res) => {
 /**
  * POST /api/tracker
  * Create new submission
- * Requires authentication
+ * Supports multipart/form-data for file uploads
  */
 router.post('/',
   authenticateToken,
-  body('studyId').trim().notEmpty().withMessage('Study ID is required'),
-  body('cancerType').trim().notEmpty().withMessage('Cancer type is required'),
-  body('contactName').trim().notEmpty().withMessage('Contact name is required'),
-  body('contactEmail').isEmail().normalizeEmail().withMessage('Valid contact email is required'),
-  body('institutionName').trim().notEmpty().withMessage('Institution name is required'),
-  body('dataType').trim().notEmpty().withMessage('Data type is required'),
-  body('sampleCount').optional().isInt({ min: 0 }).withMessage('Sample count must be a positive number'),
-  
+  upload.any(), // Handle 'file' or 'supportingFile' or multiple files
   async (req, res) => {
     try {
-      // Check validation errors
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
+      let submissionData = req.body;
+
+      // Handle raw JSON data sent as string in 'data' field (common pattern with FormData)
+      if (req.body.data && typeof req.body.data === 'string') {
+        try {
+          const parsedData = JSON.parse(req.body.data);
+          submissionData = { ...submissionData, ...parsedData };
+        } catch (e) {
+          console.error('Failed to parse JSON data field:', e);
+          return res.status(400).json({ status: 'error', message: 'Invalid JSON in data field' });
+        }
+      }
+
+      // Collect uploaded file URLs
+      const fileUrls = [];
+      if (req.files && req.files.length > 0) {
+        req.files.forEach(file => {
+          // In production, upload to S3 here. For now, use local path.
+          // Construct URL relative to backend
+          const fileUrl = `/uploads/${file.filename}`;
+          fileUrls.push(fileUrl);
+        });
+      }
+      submissionData.fileUrls = fileUrls;
+
+      // -- Validation Logic (Manual check since express-validator is tricky with optional parsing) --
+      const errors = [];
+      const { actionType } = submissionData;
+
+      if (!actionType) {
+        errors.push({ msg: 'Action type is required', path: 'actionType' });
+      }
+
+      /* 
+       * Conditional Validation based on actionType
+       * Common fields: contactName, contactEmail, institutionName, dataType 
+       * but implementation_plan says we should align with frontend usage.
+       * Frontend actually allows minimal fields for "Suggest Paper".
+       * Let's enforce basic requirements but stay flexible.
+       */
+
+      if (actionType === 'submit-data') {
+        if (!submissionData.studyName) errors.push({ msg: 'Study Name is required', path: 'studyName' });
+        if (!submissionData.description) errors.push({ msg: 'Description is required', path: 'description' });
+      } else if (actionType === 'suggest-paper') {
+        if (!submissionData.pmid) errors.push({ msg: 'PMID or URL is required', path: 'pmid' });
+      }
+
+      // Ensure required contact info if not provided in JSON (though usually it is)
+      // Frontend form sends name/email. Backend schema maps these to contactName/contactEmail if needed?
+      // Actually frontend form sends `name`, `email`. Backend expects `contactName`, `contactEmail`?
+      // Let's map them if missing.
+      if (!submissionData.contactName && submissionData.name) submissionData.contactName = submissionData.name;
+      if (!submissionData.contactEmail && submissionData.email) submissionData.contactEmail = submissionData.email;
+
+      // Basic contact validation
+      if (!submissionData.contactName) errors.push({ msg: 'Name is required', path: 'name' });
+      if (!submissionData.contactEmail) errors.push({ msg: 'Email is required', path: 'email' });
+
+
+      if (errors.length > 0) {
         return res.status(400).json({
           status: 'error',
           message: 'Validation failed',
-          errors: errors.array()
+          errors: errors
         });
       }
-      
-      const submissionData = {
-        ...req.body,
-        userId: req.user.id
+
+      const userId = req.user.id;
+      const finalSubmissionData = {
+        ...submissionData,
+        userId
       };
-      
-      const submission = await createSubmission(submissionData);
-      
+
+      const submission = await createSubmission(finalSubmissionData);
+
       res.status(201).json({
         status: 'success',
         message: 'Submission created successfully',
@@ -213,7 +295,7 @@ router.put('/:id',
           message: 'Submission not found'
         });
       }
-      
+
       // Check if user owns the submission or is super user
       if (submission.userId !== req.user.id && req.user.role !== 'super') {
         return res.status(403).json({
@@ -221,12 +303,12 @@ router.put('/:id',
           message: 'Access denied. You can only update your own submissions.'
         });
       }
-      
+
       // Don't allow changing userId
       const { userId, ...updates } = req.body;
-      
+
       const updatedSubmission = await updateSubmission(req.params.id, updates);
-      
+
       res.json({
         status: 'success',
         message: 'Submission updated successfully',
@@ -253,7 +335,7 @@ router.patch('/:id/status',
   authenticateToken,
   requireSuper,
   body('status').isIn(['pending', 'approved', 'rejected', 'in-review']).withMessage('Invalid status'),
-  
+
   async (req, res) => {
     try {
       // Check validation errors
@@ -265,17 +347,17 @@ router.patch('/:id/status',
           errors: errors.array()
         });
       }
-      
+
       const { status } = req.body;
       const updatedSubmission = await updateSubmissionStatus(req.params.id, status);
-      
+
       if (!updatedSubmission) {
         return res.status(404).json({
           status: 'error',
           message: 'Submission not found'
         });
       }
-      
+
       res.json({
         status: 'success',
         message: 'Status updated successfully',
@@ -309,7 +391,7 @@ router.delete('/:id',
           message: 'Submission not found'
         });
       }
-      
+
       // Check if user owns the submission or is super user
       if (submission.userId !== req.user.id && req.user.role !== 'super') {
         return res.status(403).json({
@@ -317,9 +399,9 @@ router.delete('/:id',
           message: 'Access denied. You can only delete your own submissions.'
         });
       }
-      
+
       await deleteSubmission(req.params.id);
-      
+
       res.json({
         status: 'success',
         message: 'Submission deleted successfully'

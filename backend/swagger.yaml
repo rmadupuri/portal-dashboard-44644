@@ -1,0 +1,100 @@
+openapi: 3.0.0
+info:
+  title: cBioPortal Data Contribution Dashboard API
+  description: API documentation for the Data Contribution Dashboard
+  version: 2.0.0
+servers:
+  - url: http://localhost:5001/api
+    description: Local Development Server
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Returns server status
+      security: []
+      responses:
+        '200':
+          description: Server is running
+  /auth/register:
+    post:
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 6
+                name:
+                  type: string
+      responses:
+        '201':
+          description: User created
+  /auth/login:
+    post:
+      summary: Login user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+  /tracker:
+    get:
+      summary: Get all submissions
+      responses:
+        '200':
+          description: List of submissions
+    post:
+      summary: Create a new submission
+      description: Supports multipart/form-data for file uploads
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                actionType:
+                  type: string
+                  enum: [suggest-paper, submit-data]
+                data:
+                  type: string
+                  description: JSON string of submission data
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '201':
+          description: Submission created
+  /tracker/my:
+    get:
+      summary: Get current user's submissions
+      responses:
+        '200':
+          description: List of user submissions

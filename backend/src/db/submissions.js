@@ -14,26 +14,49 @@ import { v4 as uuidv4 } from 'uuid';
  */
 export async function createSubmission(submissionData) {
   const submissionId = `submission_${uuidv4()}`;
-  
+
   const submission = {
     id: submissionId,
     userId: submissionData.userId,
-    
+
     // Public fields (visible to all users)
-    studyId: submissionData.studyId,
-    cancerType: submissionData.cancerType,
+    studyId: submissionData.studyId || '',
+    cancerType: submissionData.cancerType || '',
     status: submissionData.status || 'pending',
     submissionDate: submissionData.submissionDate || new Date().toISOString(),
-    
+
+    // New fields for comprehensive submission tracking
+    publicationType: submissionData.publicationType || 'published', // 'published' or 'preprint'
+    actionType: submissionData.actionType || 'suggest-paper', // 'suggest-paper' or 'submit-data'
+
+    // Paper Details
+    paperTitle: submissionData.paperTitle || '',
+    pmid: submissionData.pmid || '',
+    journal: submissionData.journal || '',
+    isLeadAuthor: submissionData.isLeadAuthor, // boolean or null
+    wantsToHelpCurate: submissionData.wantsToHelpCurate || '',
+
+    // Study Details
+    studyName: submissionData.studyName || '',
+    description: submissionData.description || '',
+    associatedPaper: submissionData.associatedPaper || '',
+    isDataTransformed: submissionData.isDataTransformed, // boolean or null
+    referenceGenome: submissionData.referenceGenome || '',
+
+    // Pre-print / Sharing options
+    sharingPreference: submissionData.sharingPreference || 'public',
+    privateAccessEmails: submissionData.privateAccessEmails || '',
+
     // Restricted fields (visible only to super users)
     contactName: submissionData.contactName || '',
     contactEmail: submissionData.contactEmail || '',
     institutionName: submissionData.institutionName || '',
-    dataType: submissionData.dataType || '',
+    dataType: submissionData.dataType || [], // Changed to array to match frontend
+    otherDataType: submissionData.otherDataType || '',
     sampleCount: submissionData.sampleCount || 0,
     validationNotes: submissionData.validationNotes || '',
-    fileUrl: submissionData.fileUrl || '',
-    
+    fileUrls: submissionData.fileUrls || [], // Array of file paths/URLs
+
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -66,41 +89,41 @@ export async function findSubmissionById(submissionId) {
  */
 export async function getAllSubmissions(options = {}) {
   const submissions = [];
-  
+
   for await (const [key, submission] of submissionsDb.iterator()) {
     let include = true;
-    
+
     // Filter by userId if provided
     if (options.userId && submission.userId !== options.userId) {
       include = false;
     }
-    
+
     // Filter by status if provided
     if (options.status && submission.status !== options.status) {
       include = false;
     }
-    
+
     // Filter by cancerType if provided
     if (options.cancerType && submission.cancerType !== options.cancerType) {
       include = false;
     }
-    
+
     if (include) {
       submissions.push({ ...submission, id: key });
     }
   }
-  
+
   // Sort by submission date (newest first)
-  submissions.sort((a, b) => 
+  submissions.sort((a, b) =>
     new Date(b.submissionDate) - new Date(a.submissionDate)
   );
-  
+
   // Apply pagination if provided
   if (options.limit) {
     const start = options.offset || 0;
     return submissions.slice(start, start + options.limit);
   }
-  
+
   return submissions;
 }
 
@@ -166,7 +189,7 @@ export async function updateSubmissionStatus(submissionId, status) {
  */
 export async function getSubmissionStats() {
   const submissions = await getAllSubmissions();
-  
+
   const stats = {
     total: submissions.length,
     pending: submissions.filter(s => s.status === 'pending').length,
@@ -175,15 +198,15 @@ export async function getSubmissionStats() {
     inReview: submissions.filter(s => s.status === 'in-review').length,
     byCancerType: {}
   };
-  
+
   // Count by cancer type
   submissions.forEach(sub => {
     if (sub.cancerType) {
-      stats.byCancerType[sub.cancerType] = 
+      stats.byCancerType[sub.cancerType] =
         (stats.byCancerType[sub.cancerType] || 0) + 1;
     }
   });
-  
+
   return stats;
 }
 

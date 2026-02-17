@@ -149,6 +149,20 @@ app.use('/api/tracker', trackerRoutes);
 app.use('/api/users', userRoutes);
 
 // ======================
+// SWAGGER DOCS
+// ======================
+import swaggerUi from 'swagger-ui-express';
+import YAML from 'yamljs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url); // Re-declaring since it might be local to scope in some modules, but safe to assume module scope
+// Wait, __filename might be used elsewhere. Let's just use relative path safely or rely on cwd.
+// backend is cwd usually.
+const swaggerDocument = YAML.load('./swagger.yaml');
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
+// ======================
 // ERROR HANDLING
 // ======================
 
@@ -167,11 +181,11 @@ app.use((req, res, next) => {
  */
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  
-  const message = process.env.NODE_ENV === 'production' 
-    ? 'Something went wrong!' 
+
+  const message = process.env.NODE_ENV === 'production'
+    ? 'Something went wrong!'
     : err.message;
-  
+
   res.status(err.statusCode || 500).json({
     status: 'error',
     message: message,
@@ -189,7 +203,7 @@ async function startServer() {
   try {
     // Initialize databases
     await initializeDatabases();
-    
+
     // Start Express server
     app.listen(PORT, () => {
       console.log(`

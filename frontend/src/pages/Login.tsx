@@ -19,17 +19,17 @@ const Login = () => {
           'Authorization': `Bearer ${token}`
         }
       })
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'success') {
-          setUser(data.data.user);
-        } else {
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            setUser(data.data.user);
+          } else {
+            localStorage.removeItem('authToken');
+          }
+        })
+        .catch(() => {
           localStorage.removeItem('authToken');
-        }
-      })
-      .catch(() => {
-        localStorage.removeItem('authToken');
-      });
+        });
     }
   }, [API_URL]);
 
@@ -83,7 +83,7 @@ const Login = () => {
                     Go to Dashboard
                     <ArrowRight className="w-4 h-4" />
                   </button>
-                  
+
                   <button
                     onClick={handleLogout}
                     className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-all duration-200 font-medium"
@@ -125,13 +125,42 @@ const Login = () => {
                 <FaGoogle className="text-lg text-red-500" />
                 <span>Login with Google</span>
               </button>
-              
+
               <button
                 onClick={handleGithubLogin}
                 className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors font-medium"
               >
                 <FaGithub className="text-lg" />
                 <span>Login with GitHub</span>
+              </button>
+
+              <div className="relative flex py-2 items-center">
+                <div className="flex-grow border-t border-gray-300"></div>
+                <span className="flex-shrink-0 mx-4 text-gray-400 text-xs">DEVELOPMENT ONLY</span>
+                <div className="flex-grow border-t border-gray-300"></div>
+              </div>
+
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_URL}/api/auth/dev-login`, { method: 'POST' });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                      localStorage.setItem('authToken', data.data.token);
+                      localStorage.setItem('userData', JSON.stringify(data.data.user)); // Optional cache
+                      // Force refresh or update state to trigger redirect
+                      window.location.href = '/';
+                    } else {
+                      alert('Dev login failed');
+                    }
+                  } catch (e) {
+                    console.error(e);
+                    alert('Dev login error');
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-gray-800 text-white rounded-md hover:bg-gray-900 transition-colors font-medium"
+              >
+                <span>Login as Developer</span>
               </button>
             </div>
           </div>
