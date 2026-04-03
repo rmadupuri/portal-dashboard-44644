@@ -25,7 +25,21 @@ export async function authenticateToken(req, res, next) {
     // Verify token
     const decoded = verifyToken(token);
     
-    // Get user from database
+    // If temporary/guest user (not in DB yet)
+    if (decoded.isTemporary) {
+      req.user = {
+        id: decoded.id,
+        email: decoded.email,
+        name: decoded.name,
+        role: decoded.role,
+        provider: decoded.provider,
+        providerId: decoded.providerId,
+        isTemporary: true
+      };
+      return next();
+    }
+    
+    // Get user from database for registered users
     const user = await findUserById(decoded.id);
     
     if (!user) {

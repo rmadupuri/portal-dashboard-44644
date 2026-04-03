@@ -2,7 +2,7 @@
 export const suggestedPapersNormalFlow = [
   'Submitted',
   'Initial Review',
-  'Approved for Portal Curation',
+  'Approved for Portal',
   'Curation in Progress',
   'Final Review',
   'Preparing for Release',
@@ -17,26 +17,26 @@ export const suggestedPapersRejectedFlow = [
 
 export const submittedDataNormalFlow = [
   'Submitted',
-  'In Review',
+  'Initial Review',
   'Approved for Portal',
+  'Curation in Progress',
+  'Final Review',
   'Preparing for Release',
   'Released'
 ];
 
 export const submittedDataRejectedFlow = [
   'Submitted',
-  'In Review',
+  'Initial Review',
   'Rejected'
 ];
 
 export const stepDescriptions: Record<string, string> = {
-  'Submitted': "You've suggested the data.",
-  'Initial Review': 'We quickly check if the paper has enough data to move forward.',
-  'In Review': 'We are reviewing your submitted data.',
-  'Approved for Portal Curation': 'Your data is approved for curation into cBioPortal.',
-  'Approved for Portal': 'Your data is approved for the portal.',
-  'Curation in Progress': 'We are working to prepare and organize your data for the portal.',
-  'Final Review': 'We do a final check to ensure everything is accurate.',
+  'Submitted': "Your submission has been received.",
+  'Initial Review': 'We quickly check if the submission has enough data to move forward.',
+  'Approved for Portal': 'Your submission is approved — curation work will begin soon.',
+  'Curation in Progress': 'We are preparing and organizing your data for the portal.',
+  'Final Review': 'We are doing a final internal check to ensure everything is accurate.',
   'Preparing for Release': 'We are getting ready to make your data public.',
   'Released': 'Your data is now live on the portal!',
   'Rejected': "We reviewed your submission, but unfortunately it doesn't have enough data to move forward at this time."
@@ -64,14 +64,25 @@ export const getMappedStatus = (status: string, trackType: 'suggested-papers' | 
     return 'Submitted';
   }
   
-  // Map "Under Review" to appropriate review step
+  // Map "Under Review" to Final Review on both tracks
   if (status === 'Under Review') {
-    return trackType === 'suggested-papers' ? 'Final Review' : 'In Review';
+    return 'Final Review';
   }
+
+  // Map curation-related statuses
+  if (["Awaiting Submitter's Response", 'Awaiting Submitters Response', 'Clarification Needed', 'Changes Requested', 'In Progress'].includes(status)) {
+    return 'Curation in Progress';
+  }
+
+  // Map In Portal to Released
+  if (status === 'In Portal') return 'Released';
+
+  // Map Missing Data to Not Curatable
+  if (status === 'Missing Data') return 'Not Curatable';
   
-  // Map "Approved for Portal" variations
-  if (status === 'Approved for Portal') {
-    return trackType === 'suggested-papers' ? 'Approved for Portal Curation' : 'Approved for Portal';
+  // Map legacy "Approved for Portal Curation" to unified label
+  if (status === 'Approved for Portal Curation') {
+    return 'Approved for Portal';
   }
   
   return status;

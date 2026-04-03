@@ -1,6 +1,7 @@
 
-import React from 'react';
-import { Check, Clock, AlertCircle, X } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Check, Clock, X, Paperclip, MessageSquarePlus, FileText, Trash2, AlertTriangle } from 'lucide-react';
+import { updateCurationNotes, addFilesToSubmission, addNoteToSubmission, deleteSubmission } from '@/services/api';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { 
   suggestedPapersNormalFlow, 
@@ -14,11 +15,27 @@ import {
 interface SubmissionFlowTrackerProps {
   currentStatus: string;
   trackType?: 'suggested-papers' | 'submitted-data';
+  data?: any;
+  isSuperUser?: boolean;
+  currentUserEmail?: string;
+  onDeleted?: (submissionId: string) => void;
 }
 
-export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-papers' }: SubmissionFlowTrackerProps) => {
+export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-papers', data, isSuperUser = false, currentUserEmail = '', onDeleted }: SubmissionFlowTrackerProps) => {
+  const d = (data as any) || {};
+  const [curationNotes, setCurationNotes] = useState<string>(d.curationNotes || '');
+  const [curationNotesArray, setCurationNotesArray] = useState<any[]>(d.curationNotesArray || []);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Sync curationNotes if the data prop changes (e.g. when switching rows)
+  React.useEffect(() => {
+    setCurationNotes(d.curationNotes || '');
+    setCurationNotesArray(d.curationNotesArray || []);
+  }, [d.submissionId, d.curationNotes]);
+
   // Determine which flow to use
-  const isNotCuratable = currentStatus === 'Not Curatable' || currentStatus === 'Not Curarable';
+  const isNotCuratable = currentStatus === 'Not Curatable' || currentStatus === 'Missing Data';
   
   let flowSteps: string[];
   if (trackType === 'suggested-papers') {
@@ -91,10 +108,92 @@ export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-pa
     return <div>{labelText}</div>;
   };
 
+  const Field = ({ label, value }: { label: string; value?: string | null }) =>
+    value ? (
+      <div className="flex gap-2 text-xs">
+        <span className="font-semibold text-gray-500 min-w-[130px] flex-shrink-0">{label}:</span>
+        <span className="text-gray-800 break-all">{value}</span>
+      </div>
+    ) : null;
+
+  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+    <div>
+      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{title}</p>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1">{children}</div>
+    </div>
+  );
+
+  const isSuggest = d.submissionType === 'suggest-paper';
+  const isData = d.submissionType === 'submit-data' || d.publicationType === 'preprint';
+  const formatDate = (v: string) => v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) + ' EST' : undefined;
+
   return (
     <TooltipProvider>
-      <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Submission Progress</h3>
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+
+        {/* Superseded banner — shown when a data submission has been made for the same study */}
+        {d.supersededBy && (
+          <SupersededBanner
+            dataSubmissionId={d.supersededBy}
+            supersededAt={d.supersededAt}
+            allSubmissions={[]}
+          />
+        )}
+
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Submission Details</h3>
+        <div className="space-y-3 mb-3 pb-3 border-b border-gray-100">
+
+          {/* Submission metadata — always shown */}
+          <Section title="Submission">
+            <Field label="Submission ID" value={d.submissionId?.replace(/^submission_/, '')} />
+            <Field label="Submitted" value={formatDate(d.createdAt)} />
+          </Section>
+
+          {/* Contact */}
+          <Section title="Contact">
+            <Field label="Name" value={d.author} />
+            <Field label="Email" value={d.email} />
+            {d.canContactEmail === false && <Field label="Alt. Email" value={d.alternativeEmail} />}
+          </Section>
+
+          {/* Study suggestion fields */}
+          {isSuggest && (
+            <Section title="Study Information">
+              <Field label="PMID / URL" value={d.pmid} />
+              <Field label="Journal / Source" value={d.journal} />
+              <Field label="Authors" value={d.authors} />
+              <Field label="Publication Year" value={d.publicationYear} />
+              <Field label="Study Title" value={d.title || d.paperTitle} />
+              <Field label="Lead Author?" value={d.isLeadAuthor === true ? 'Yes' : d.isLeadAuthor === false ? 'No' : undefined} />
+              <Field label="Help Curate?" value={d.wantsToHelpCurate} />
+            </Section>
+          )}
+
+          {/* Data submission fields */}
+          {isData && (
+            <Section title="Dataset Information">
+              <Field label="Study Name" value={d.studyName} />
+              <Field label="Description" value={d.studyDescription} />
+              <Field label="PMID / URL" value={d.pmid || d.associatedPaper} />
+              <Field label="Link to Data" value={d.curatedDataLink} />
+              <Field label="Data Transformed?" value={d.isDataTransformed === true ? 'Yes' : d.isDataTransformed === false ? 'No' : undefined} />
+              <Field label="Reference Genome" value={d.referenceGenome} />
+              <Field label="Sharing" value={d.sharingPreference} />
+              {d.sharingPreference === 'private' && <Field label="Private Emails" value={d.privateAccessEmails} />}
+            </Section>
+          )}
+
+          {/* Common */}
+          {(d.dataTypes || d.attachedFiles || d.notes) && (
+            <Section title="Additional">
+              <Field label="Data Types" value={d.dataTypes} />
+              <Field label="Attached Files" value={d.attachedFiles} />
+              <Field label="Comments" value={d.notes} />
+            </Section>
+          )}
+        </div>
+
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Submission Progress</h3>
         
         <div className="relative">
           {/* Progress line */}
@@ -157,7 +256,448 @@ export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-pa
             })}
           </div>
         </div>
-      </div>
+
+      {/* ─── Super User: Delete Submission ───────────────────────────────── */}
+      {isSuperUser && d.submissionId && (
+        <div className="mt-5 pt-4 border-t border-gray-100">
+          {!confirmDelete ? (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 font-medium"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete submission
+            </button>
+          ) : (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-red-600 font-medium">Delete this submission permanently?</span>
+              <button
+                disabled={deleting}
+                onClick={async () => {
+                  setDeleting(true);
+                  try {
+                    await deleteSubmission(d.submissionId);
+                    onDeleted?.(d.submissionId);
+                  } catch (e) {
+                    console.error('Failed to delete submission:', e);
+                    setDeleting(false);
+                    setConfirmDelete(false);
+                  }
+                }}
+                className="text-xs px-2.5 py-1 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? 'Deleting…' : 'Yes, delete'}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-xs px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── Updates Thread ─────────────────────────────────────────────── */}
+      <NotesThread
+        submissionId={d.submissionId}
+        submitterEmail={d.email}
+        curationNotes={curationNotes}
+        curationNotesArray={curationNotesArray}
+        curationNotesUpdatedAt={d.curationNotesUpdatedAt}
+        setCurationNotes={setCurationNotes}
+        setCurationNotesArray={setCurationNotesArray}
+        submitterNotes={d.submitterNotes || []}
+        isSuperUser={isSuperUser}
+        currentUserEmail={currentUserEmail}
+        sharingPreference={d.sharingPreference}
+      />
+
+    </div>
     </TooltipProvider>
+  );
+};
+
+// ─── Superseded banner ───────────────────────────────────────────────────────
+
+const SupersededBanner: React.FC<{
+  dataSubmissionId: string;
+  supersededAt?: string | null;
+  allSubmissions: any[];
+}> = ({ dataSubmissionId, supersededAt }) => {
+  const [exists, setExists] = React.useState<'loading' | 'yes' | 'no'>('loading');
+
+  React.useEffect(() => {
+    const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5001';
+    const token = localStorage.getItem('authToken');
+    // Try the public endpoint first (no auth needed) — it only exposes published subs
+    // We just need to know if the ID resolves to something
+    fetch(`${API_URL}/api/submit/public`)
+      .then(r => r.json())
+      .then(d => {
+        const found = (d.data?.submissions || []).some((s: any) => s.id === dataSubmissionId);
+        if (found) { setExists('yes'); return; }
+        // Also check authed endpoint if logged in
+        if (!token) { setExists('no'); return; }
+        return fetch(`${API_URL}/api/submit`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }).then(r => r.json()).then(d2 => {
+          const found2 = (d2.data?.submissions || []).some((s: any) => s.id === dataSubmissionId);
+          setExists(found2 ? 'yes' : 'no');
+        });
+      })
+      .catch(() => setExists('no'));
+  }, [dataSubmissionId]);
+
+  if (exists === 'loading') return null;
+
+  const shortId = dataSubmissionId.replace(/^submission_/, '').slice(0, 8);
+  const fmt = (iso?: string | null) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+  return (
+    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
+      <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+      <div className="text-xs text-amber-800">
+        <span className="font-semibold">A data submission for this study has been submitted</span>
+        {supersededAt && <span className="text-amber-600 ml-1">({fmt(supersededAt)})</span>}
+        {exists === 'yes' ? (
+          <span>
+            {' — '}
+            <a
+              href={`/track-status?tab=submitted-data`}
+              className="underline font-medium hover:text-amber-900"
+            >
+              View data submission
+            </a>
+            <span className="font-mono ml-1 opacity-60">#{shortId}</span>
+          </span>
+        ) : (
+          <span className="text-amber-600 ml-1">(the linked submission may have been deleted)</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Notes Thread (card list with role badge) ──────────────────────────────────
+
+interface CurationNote {
+  text: string;
+  addedAt: string;
+  addedBy: string;
+  editedAt?: string;
+}
+
+interface NotesThreadProps {
+  submissionId: string;
+  submitterEmail: string;
+  curationNotes: string;
+  curationNotesArray: CurationNote[];
+  curationNotesUpdatedAt?: string | null;
+  setCurationNotes: (v: string) => void;
+  setCurationNotesArray: (v: CurationNote[]) => void;
+  submitterNotes: Array<{ text: string; addedAt: string; addedBy: string }>;
+  isSuperUser: boolean;
+  currentUserEmail: string;
+  sharingPreference?: string;
+}
+
+const fmt = (iso: string) =>
+  new Date(iso).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+
+const NotesThread: React.FC<NotesThreadProps> = ({
+  submissionId, submitterEmail, curationNotes, curationNotesArray, curationNotesUpdatedAt, setCurationNotes, setCurationNotesArray,
+  submitterNotes, isSuperUser, currentUserEmail, sharingPreference,
+}) => {
+  const isSubmitter = !!currentUserEmail && !!submitterEmail &&
+    currentUserEmail.toLowerCase().trim() === submitterEmail.toLowerCase().trim();
+  const isPublic = !sharingPreference || sharingPreference === 'public';
+  const canSeeSubmitterNotes = isSuperUser || isSubmitter || isPublic;
+
+  const [note, setNote] = useState('');
+  const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [folderInputKey, setFolderInputKey] = useState(0);
+  const [uploadMode, setUploadMode] = useState<'files' | 'folder' | null>(null);
+  const [composeTab, setComposeTab] = useState<'note' | 'files'>('note');
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [savingCuration, setSavingCuration] = useState(false);
+  const [flashMsg, setFlashMsg] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const flash = (msg: string) => { setFlashMsg(msg); setTimeout(() => setFlashMsg(''), 3000); };
+
+  const handleSendNote = async () => {
+    if (!note.trim()) return;
+    setSaving(true);
+    try { await addNoteToSubmission(submissionId, note); setNote(''); flash('Note added'); }
+    catch (e: any) { flash(e.message || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  const handleUploadFiles = async () => {
+    if (!files.length) return;
+    setSaving(true);
+    try {
+      await addFilesToSubmission(submissionId, files);
+      setFiles([]);
+      setFileInputKey(k => k + 1);
+      setFolderInputKey(k => k + 1);
+      setUploadMode(null);
+      flash(`${files.length} file(s) uploaded`);
+    } catch (e: any) { flash(e.message || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  const handlePostCuration = async () => {
+    if (!draft.trim()) return;
+    setSavingCuration(true);
+    try {
+      const res = await updateCurationNotes(submissionId, draft, 'append');
+      const updated = res.data.curationNotesArray;
+      setCurationNotesArray(updated);
+      setCurationNotes(updated[updated.length - 1]?.text || '');
+      setDraft('');
+      flash('Note posted');
+    } catch (e) { console.error(e); }
+    finally { setSavingCuration(false); }
+  };
+
+  const handleEditCuration = async (index: number, text: string) => {
+    setSavingCuration(true);
+    try {
+      const res = await updateCurationNotes(submissionId, text, 'edit', index);
+      const updated = res.data.curationNotesArray;
+      setCurationNotesArray(updated);
+      setCurationNotes(updated[updated.length - 1]?.text || '');
+      setEditingNoteIndex(null);
+      setEditingNoteText('');
+      flash('Note updated');
+    } catch (e) { console.error(e); }
+    finally { setSavingCuration(false); }
+  };
+
+  const hasAnyContent = !!curationNotes || (canSeeSubmitterNotes && submitterNotes.length > 0) || isSuperUser || isSubmitter;
+  if (!hasAnyContent) return null;
+
+  return (
+    <div className="mt-5 pt-4 border-t border-gray-100 space-y-4">
+
+      {/* Curation Team Notes */}
+      {(isSuperUser || curationNotesArray.length > 0 || !!curationNotes) && (
+        <div>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Curation Team</p>
+
+          {/* Render each note */}
+          {(curationNotesArray.length > 0
+            ? curationNotesArray
+            : curationNotes ? [{ text: curationNotes, addedAt: curationNotesUpdatedAt || '', addedBy: '' }] : []
+          ).map((n, i) => (
+            <div key={i} className="flex gap-2.5 items-start mb-3">
+              <span className="shrink-0 mt-0.5 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-200 text-gray-600 text-[10px] font-bold">CT</span>
+              <div className="pt-0.5 flex-1 min-w-0">
+                {editingNoteIndex === i ? (
+                  <div>
+                    <textarea
+                      value={editingNoteText}
+                      onChange={e => setEditingNoteText(e.target.value)}
+                      rows={2}
+                      className="w-full text-xs border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:border-gray-400 resize-none"
+                    />
+                    <div className="flex items-center gap-2 mt-1">
+                      <button
+                        disabled={!editingNoteText.trim() || savingCuration}
+                        onClick={() => handleEditCuration(i, editingNoteText)}
+                        className="text-xs px-2.5 py-1 rounded-md bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-40"
+                      >{savingCuration ? 'Saving…' : 'Save'}</button>
+                      <button
+                        onClick={() => { setEditingNoteIndex(null); setEditingNoteText(''); }}
+                        className="text-xs px-2.5 py-1 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"
+                      >Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{n.text}</p>
+                    <div className="flex items-center gap-3 mt-0.5">
+                      {n.addedAt && <p className="text-[10px] text-gray-400">{fmt(n.addedAt)}{n.editedAt ? ' (edited)' : ''}</p>}
+                      {isSuperUser && (
+                        <button
+                          onClick={() => { setEditingNoteIndex(i); setEditingNoteText(n.text); }}
+                          className="text-[10px] text-gray-400 hover:text-blue-500"
+                        >Edit</button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Add new note compose box */}
+          {isSuperUser && (
+            <div className="ml-8">
+              <textarea
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                rows={2}
+                placeholder="Add a note for the submitter…"
+                className="w-full text-xs border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:border-gray-400 resize-none"
+              />
+              <div className="flex items-center justify-between mt-1.5">
+                <span className="text-[10px] text-green-600">{flashMsg}</span>
+                <button
+                  disabled={!draft.trim() || savingCuration}
+                  onClick={handlePostCuration}
+                  className="text-xs px-3 py-1.5 rounded-md bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-40"
+                >
+                  {savingCuration ? 'Posting…' : 'Post Note'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Submitter Notes */}
+      {(isSubmitter || (canSeeSubmitterNotes && submitterNotes.length > 0)) && (
+        <div>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Submitter</p>
+
+          {canSeeSubmitterNotes && submitterNotes.length > 0 && (
+            <div className="space-y-2.5 mb-3">
+              {submitterNotes.map((n, i) => (
+                <div key={i} className="flex gap-2.5 items-start">
+                  <span className="shrink-0 mt-0.5 inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-[10px] font-bold">S</span>
+                  <div className="pt-0.5">
+                    <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{n.text}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{fmt(n.addedAt)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {isSubmitter && (
+            <div className="ml-8">
+              <div className="flex gap-3 mb-2">
+                {(['note', 'files'] as const).map(t => (
+                  <button key={t} onClick={() => setComposeTab(t)}
+                    className={`text-[11px] font-medium pb-0.5 transition-colors ${
+                      composeTab === t ? 'text-blue-600 border-b border-blue-500' : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                  >
+                    {t === 'note' ? 'Add Note' : 'Add Files'}
+                  </button>
+                ))}
+              </div>
+
+              {composeTab === 'note' ? (
+                <div>
+                  <textarea
+                    value={note}
+                    onChange={e => setNote(e.target.value)}
+                    rows={2}
+                    placeholder="Write a note for the curation team…"
+                    className="w-full text-xs border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:border-blue-300 resize-none"
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSendNote(); }}
+                  />
+                  <div className="flex items-center justify-between mt-1.5">
+                    <span className="text-[10px] text-green-600">{flashMsg}</span>
+                    <button
+                      disabled={!note.trim() || saving}
+                      onClick={handleSendNote}
+                      className="text-xs px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                    >
+                      {saving ? 'Saving…' : 'Post Note'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-gray-400">
+                    Saved in <code className="bg-gray-100 px-1 rounded">update_{new Date().toISOString().slice(0, 10)}</code>
+                  </p>
+                  <input
+                    key={`tracker-file-${fileInputKey}`}
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      if (!e.target.files?.length) return;
+                      const incoming = Array.from(e.target.files);
+                      setFiles(prev => {
+                        const base = uploadMode === 'folder' ? [] : prev;
+                        const existing = new Set(base.map(f => `${f.name}-${f.size}`));
+                        return [...base, ...incoming.filter(f => !existing.has(`${f.name}-${f.size}`))];
+                      });
+                      setUploadMode('files');
+                      setFileInputKey(k => k + 1);
+                    }}
+                  />
+                  <input
+                    key={`tracker-folder-${folderInputKey}`}
+                    ref={folderInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    // @ts-ignore
+                    webkitdirectory=""
+                    onChange={e => {
+                      if (!e.target.files?.length) return;
+                      setFiles(Array.from(e.target.files));
+                      setUploadMode('folder');
+                      setFolderInputKey(k => k + 1);
+                    }}
+                  />
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <button onClick={() => fileInputRef.current?.click()}
+                      className="text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1.5">
+                      <Paperclip className="h-3.5 w-3.5" /> Select files
+                    </button>
+                    <button onClick={() => folderInputRef.current?.click()}
+                      className="text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1.5">
+                      <Paperclip className="h-3.5 w-3.5" /> Select folder
+                    </button>
+                    {files.length > 0 && (
+                      <button disabled={saving} onClick={handleUploadFiles}
+                        className="text-xs px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                        {saving ? 'Uploading…' : `Upload ${files.length} file(s)`}
+                      </button>
+                    )}
+                    <span className="text-[10px] text-green-600">{flashMsg}</span>
+                  </div>
+                  {files.length > 0 && (
+                    <ul className="space-y-1">
+                      {files.map((f, i) => (
+                        <li key={i} className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setFiles(prev => prev.filter((_, idx) => idx !== i))}
+                            className="p-0.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 shrink-0"
+                            title="Remove file"
+                          ><X className="h-3 w-3" /></button>
+                          <FileText className="h-3 w-3 shrink-0 text-gray-500" />
+                          <span className="text-[11px] text-gray-500 truncate">{f.name}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 };

@@ -1,7 +1,7 @@
 
 import { AgGridReact } from "ag-grid-react";
-import { ColDef, ColGroupDef, RowClickedEvent, IsFullWidthRowParams, CellClickedEvent } from "ag-grid-community";
-import { useState } from "react";
+import { ColDef, ColGroupDef, CellClickedEvent } from "ag-grid-community";
+import { useState, useRef, useEffect } from "react";
 import { Submission } from "@/types/submission";
 import { SubmissionFlowTracker } from "./SubmissionFlowTracker";
 
@@ -9,11 +9,17 @@ interface SubmissionGridProps {
   rowData: Submission[];
   columnDefs: (ColDef | ColGroupDef)[];
   onRowSelected?: (submission: Submission) => void;
+  onStatusChanged?: (submissionId: string, newStatus: string) => void;
+  onDeleted?: (submissionId: string) => void;
   trackType?: 'suggested-papers' | 'submitted-data';
+  isSuperUser?: boolean;
+  currentUserEmail?: string;
 }
 
-export const SubmissionGrid = ({ rowData, columnDefs, onRowSelected, trackType = 'suggested-papers' }: SubmissionGridProps) => {
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+export const SubmissionGrid = ({ rowData, columnDefs, onRowSelected, onStatusChanged, onDeleted, trackType = 'suggested-papers', isSuperUser = false, currentUserEmail = '' }: SubmissionGridProps) => {
+  const [selectedRow, setSelectedRow] = useState<Submission | null>(null);
+  const currentPageRef = useRef<number>(0);
+  const panelRef = useRef<HTMLDivElement>(null);
   const paginationPageSize = 10;
 
   const defaultColDef: ColDef = {
@@ -30,180 +36,123 @@ export const SubmissionGrid = ({ rowData, columnDefs, onRowSelected, trackType =
     }
   };
 
-  // Prepare row data with expanded rows inserted and trackType
-  const preparedRowData = rowData.flatMap(row => {
-    const submissionId = row.submissionId || row.id;
-    const rowWithTrackType = { ...row, trackType };
-    const rows = [rowWithTrackType];
-    
-    if (submissionId && expandedRows.has(submissionId)) {
-      rows.push({
-        ...rowWithTrackType,
-        isExpansionRow: true,
-        submissionId: `${submissionId}_expansion`
-      });
+  const preparedRowData = rowData.map(row => ({ ...row, trackType }));
+
+  const selectedId = selectedRow?.submissionId || selectedRow?.id;
+
+  // When a status is assigned, update selectedRow immediately so the progress panel reflects it
+  const handleStatusChangedWithPanel = (submissionId: string, newStatus: string) => {
+    if (selectedRow && (selectedRow.submissionId === submissionId || selectedRow.id === submissionId)) {
+      setSelectedRow(prev => prev ? { ...prev, status: newStatus } : null);
     }
-    
-    return rows;
-  });
-
-  // Check if the row is a full-width row
-  const isFullWidthRow = (params: IsFullWidthRowParams) => {
-    return params.rowNode.data?.isExpansionRow === true;
+    onStatusChanged?.(submissionId, newStatus);
   };
 
-  // Renderer for the full-width row
-  const fullWidthCellRenderer = (params: any) => {
-    return (
-      <div className="w-full p-4 bg-slate-50 border-t border-gray-200 mb-2">
-        <SubmissionFlowTracker currentStatus={params.data.status} trackType={trackType} />
-      </div>
-    );
-  };
-
-  // Handle cell click to toggle expanded state only for submission ID column
   const handleCellClicked = (event: CellClickedEvent) => {
-    // Only handle clicks on the submissionId column and not on expansion rows
-    if (event.colDef.field !== 'submissionId' || event.data?.isExpansionRow) return;
-    
-    const submissionId = event.data?.submissionId || event.data?.id;
-    if (!submissionId) return;
+    if (event.colDef.field !== 'submissionId') return;
+    const clicked = event.data as Submission;
+    const clickedId = clicked?.submissionId || clicked?.id;
 
-    setExpandedRows(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(submissionId)) {
-        newSet.delete(submissionId);
-      } else {
-        newSet.add(submissionId);
-      }
-      return newSet;
-    });
-
-    if (onRowSelected) {
-      onRowSelected(event.data);
+    if (clickedId === selectedId) {
+      // Toggle off
+      setSelectedRow(null);
+    } else {
+      setSelectedRow(clicked);
+      // Scroll panel into view after render
+      setTimeout(() => {
+        panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
     }
-  };
 
-  // Ensure expansion rows are not selectable
-  const isRowSelectable = (params: any) => {
-    return !params.data?.isExpansionRow;
+    if (onRowSelected) onRowSelected(clicked);
   };
 
   return (
-    <div className="ag-theme-alpine w-full">
-      <style>{`
-        .cell-wrap-ellipsis {
-          display: flex !important;
-          align-items: center !important;
-          white-space: nowrap !important;
-          overflow: hidden !important;
-          text-overflow: ellipsis !important;
-          max-width: 100% !important;
-        }
-
-        .cell-wrap-ellipsis > div {
-          max-width: 100% !important;
-          overflow: hidden !important;
-          text-overflow: ellipsis !important;
-          white-space: nowrap !important;
-        }
-
-        .ag-cell {
-          display: flex !important;
-          align-items: center !important;
-          padding: 8px 12px !important;
-        }
-
-        .ag-cell-wrapper {
-          width: 100% !important;
-          max-width: 100% !important;
-          overflow: hidden !important;
-        }
-
-        .ag-cell-value {
-          width: 100% !important;
-          max-width: 100% !important;
-          overflow: hidden !important;
-          text-overflow: ellipsis !important;
-          white-space: nowrap !important;
-        }
-
-        .ag-header-cell-label {
-          display: flex;
-          align-items: center;
-        }
-
-        .ag-row-selected {
-          background-color: #e3f2fd !important;
-        }
-
-        .ag-full-width-row {
-          background-color: transparent !important;
-          margin-bottom: 8px !important;
-        }
-
-        .ag-full-width-row .ag-cell {
-          padding: 0 !important;
-          border: none !important;
-          background-color: transparent !important;
-        }
-
-        .ag-center-cols-viewport {
-          padding-bottom: 20px !important;
-        }
-
-        .ag-header-container {
-          min-width: 100% !important;
-        }
-
-        .ag-header-cell {
-          overflow: visible !important;
-        }
-
-        .ag-header-cell-text {
-          white-space: nowrap !important;
-          overflow: visible !important;
-          text-overflow: clip !important;
-        }
-
-        /* Force text truncation for all text elements */
-        .ag-cell span,
-        .ag-cell div,
-        .ag-cell a {
-          max-width: 100% !important;
-          overflow: hidden !important;
-          text-overflow: ellipsis !important;
-          white-space: nowrap !important;
-        }
-      `}</style>
-
-      <AgGridReact
-        rowData={preparedRowData}
-        columnDefs={columnDefs}
-        defaultColDef={defaultColDef}
-        pagination={true}
-        paginationPageSize={paginationPageSize}
-        rowSelection="single"
-        enableCellTextSelection={true}
-        animateRows={true}
-        domLayout="autoHeight"
-        className="w-full rounded-md overflow-hidden"
-        rowHeight={60}
-        onCellClicked={handleCellClicked}
-        isFullWidthRow={isFullWidthRow}
-        fullWidthCellRenderer={fullWidthCellRenderer}
-        isRowSelectable={isRowSelectable}
-        suppressColumnVirtualisation={true}
-        suppressAutoSize={true}
-        skipHeaderOnAutoSize={true}
-        context={{ trackType }}
-        getRowHeight={(params) => {
-          if (params.data?.isExpansionRow) {
-            return 280; // Increased height for better visibility
+    <div className="w-full">
+      <div className="ag-theme-alpine w-full">
+        <style>{`
+          .cell-wrap-ellipsis {
+            display: flex !important;
+            align-items: center !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            max-width: 100% !important;
           }
-          return 60; // Normal row height
-        }}
-      />
+          .cell-wrap-ellipsis > div {
+            max-width: 100% !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            white-space: nowrap !important;
+          }
+          .ag-cell {
+            display: flex !important;
+            align-items: center !important;
+            padding: 8px 12px !important;
+          }
+          .ag-cell-wrapper { width: 100% !important; max-width: 100% !important; overflow: hidden !important; }
+          .ag-cell-value { width: 100% !important; max-width: 100% !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+          .ag-header-cell-label { display: flex; align-items: center; }
+          .ag-row-selected { background-color: #e3f2fd !important; }
+          .ag-center-cols-viewport { padding-bottom: 20px !important; }
+          .ag-header-container { min-width: 100% !important; }
+          .ag-header-cell { overflow: visible !important; }
+          .ag-header-cell-text { white-space: nowrap !important; overflow: visible !important; text-overflow: clip !important; }
+          .ag-cell span, .ag-cell div, .ag-cell a { max-width: 100% !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+          .ag-row-highlighted { background-color: #eff6ff !important; border-left: 3px solid #3b82f6 !important; }
+          .ag-cell[col-id="status"] { overflow: visible !important; z-index: 10; }
+          .ag-row { overflow: visible !important; }
+          .ag-center-cols-container { overflow: visible !important; }
+          .ag-body-viewport { overflow-x: auto !important; overflow-y: auto !important; }
+        `}</style>
+
+        <AgGridReact
+          rowData={preparedRowData}
+          columnDefs={columnDefs}
+          defaultColDef={defaultColDef}
+          pagination={true}
+          paginationPageSize={paginationPageSize}
+          rowSelection="single"
+          enableCellTextSelection={true}
+          animateRows={true}
+          domLayout="autoHeight"
+          className="w-full rounded-md overflow-hidden"
+          rowHeight={60}
+          onCellClicked={handleCellClicked}
+          suppressColumnVirtualisation={true}
+          suppressAutoSize={true}
+          skipHeaderOnAutoSize={true}
+          context={{ trackType, isSuperUser, onStatusChanged: handleStatusChangedWithPanel }}
+          getRowClass={(params) => {
+            const rowId = params.data?.submissionId || params.data?.id;
+            return rowId === selectedId ? 'ag-row-highlighted' : '';
+          }}
+          onPaginationChanged={(params) => {
+            const newPage = params.api?.paginationGetCurrentPage?.() ?? 0;
+            if (newPage !== currentPageRef.current) {
+              currentPageRef.current = newPage;
+              setSelectedRow(null);
+            }
+          }}
+        />
+      </div>
+
+      {/* Detail panel — below grid, no row count inflation */}
+      {selectedRow && (
+        <div ref={panelRef} className="mt-0 border-t-2 border-blue-400 rounded-b-lg bg-white shadow-sm">
+          <SubmissionFlowTracker
+            currentStatus={selectedRow.status}
+            trackType={trackType}
+            data={selectedRow}
+            isSuperUser={isSuperUser}
+            currentUserEmail={currentUserEmail}
+            onDeleted={(id) => {
+              setSelectedRow(null);
+              onDeleted?.(id);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };

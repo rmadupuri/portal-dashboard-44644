@@ -25,11 +25,18 @@ interface SamplesByCancerTypeChartProps {
   barSize?: number;
 }
 
+// cBioPortal frontend colors — StudyViewConfig + Colors.ts
 const COLORS = [
-  "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", 
-  "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-  "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
-  "#c49c94", "#f7b6d3", "#c7c7c7", "#dbdb8d", "#9edae5"
+  "#1b9e77", // teal
+  "#7570b3", // muted purple
+  "#d95f02", // burnt orange
+  "#66a61e", // olive green
+  "#e6ab02", // gold
+  "#a6761d", // brown
+  "#666666", // gray
+  "#1b9e77", "#7570b3", "#d95f02", "#66a61e",
+  "#e6ab02", "#a6761d", "#666666", "#1b9e77",
+  "#7570b3", "#d95f02", "#66a61e", "#e6ab02"
 ];
 
 const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({ 
@@ -50,8 +57,8 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
 
   // Use smaller margins for embedded variant but ensure space for labels
   const chartMargin = variant === 'embedded' 
-    ? { top: 10, right: 20, left: 20, bottom: 50 }
-    : { top: 20, right: 30, left: 20, bottom: 60 };
+    ? { top: 10, right: 20, left: 0, bottom: 30 }
+    : { top: 20, right: 30, left: 0, bottom: 40 };
 
   const chartComponent = (
     <ResponsiveContainer width="100%" height={height}>
@@ -60,7 +67,7 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
         layout="vertical"
         margin={chartMargin}
       >
-        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+        <CartesianGrid strokeDasharray="3 3" stroke="#e8eef7" horizontal={false} />
         <XAxis
           type="number"
           tick={{ fontSize: 12, fill: '#666' }}
@@ -72,25 +79,44 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
           label={{
             value: 'Number of Samples',
             position: 'insideBottom',
-            offset: -10,
-            style: { textAnchor: 'middle', fontSize: '12px', fill: '#666' }
+            offset: -15,
+            style: { textAnchor: 'middle', fontSize: '12px', fill: '#888' }
           }}
         />
         <YAxis
           type="category"
           dataKey="name"
-          tick={{ fontSize: 11, fill: '#666' }}
           axisLine={{ stroke: '#ccc' }}
-          tickLine={{ stroke: '#ccc' }}
-          width={190}
-          tickFormatter={(value) =>
-            value.length > 25 ? value.substring(0, 25) + '...' : value
-          }
+          tickLine={false}
+          width={160}
+          tick={(props) => {
+            const { x, y, payload } = props;
+            const value: string = payload.value;
+            // Only wrap labels longer than 18 chars
+            if (value.length <= 18) {
+              return (
+                <g transform={`translate(${x},${y})`}>
+                  <text x={0} y={4} textAnchor="end" fill="#555" fontSize={11}>{value}</text>
+                </g>
+              );
+            }
+            const words = value.split(' ');
+            const mid = Math.ceil(words.length / 2);
+            const line1 = words.slice(0, mid).join(' ');
+            const line2 = words.slice(mid).join(' ');
+            return (
+              <g transform={`translate(${x},${y})`}>
+                <text x={0} y={-5} textAnchor="end" fill="#555" fontSize={11}>{line1}</text>
+                {line2 && <text x={0} y={8} textAnchor="end" fill="#555" fontSize={11}>{line2}</text>}
+              </g>
+            );
+          }}
           label={{
             value: 'Cancer Type',
             angle: -90,
             position: 'insideLeft',
-            style: { textAnchor: 'middle', fontSize: '12px', fill: '#666' }
+            offset: 15,
+            style: { textAnchor: 'middle', fontSize: '12px', fill: '#888' }
           }}
         />
         <Tooltip
@@ -112,7 +138,7 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
             return null;
           }}
         />
-        <Bar dataKey="samples" radius={[0, 4, 4, 0]} barSize={barSize}>
+        <Bar dataKey="samples" radius={[0, 6, 6, 0]} barSize={barSize}>
           {sortedData.map((entry, index) => (
             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
           ))}

@@ -16,8 +16,7 @@ export interface Study {
    * @returns The extracted year or fallback year
    */
   export const extractYearFromStudy = (study: Study, fallbackYear?: number): number => {
-    const currentYear = new Date().getFullYear();
-    const defaultFallback = fallbackYear ?? currentYear;
+    const defaultFallback = fallbackYear ?? 2026; // matches backend YEAR_EXPR fallback
     
     // Strategy 1: Try to extract year from citation first
     if (study.citation) {
@@ -122,14 +121,6 @@ export interface Study {
     const sortedYears = Array.from(years).sort((a, b) => a - b);
     
     return sortOrder === 'desc' ? sortedYears.reverse() : sortedYears;
-  };
-  
-  /**
-   * Get the current year
-   * @returns Current year as number
-   */
-  export const getCurrentYear = (): number => {
-    return new Date().getFullYear();
   };
   
   /**

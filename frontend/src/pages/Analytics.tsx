@@ -6,18 +6,14 @@ import {
   fetchCancerStudies, 
   fetchCancerTypes,
   fetchSamples,
-  fetchSampleLists
+  fetchStudiesCount,
+  fetchCancerTypeSamples,
+  fetchStudySampleCounts,
+  fetchSampleCountsByDataType
 } from "@/services/cbioportalApi";
-import { 
-  parseIssuesData, 
-  parsePullRequestsData, 
-  parseSampleCountData,
-  parseSamplesByDataType 
-} from "@/utils/dataParser";
+import { parseIssuesData, parsePullRequestsData } from "@/utils/dataParser";
 import {
-  processCumulativeGrowthData,
-  processTrackerStatusData,
-  processSampleCountsByDataType
+  processCumulativeGrowthData
 } from "@/utils/analyticsDataProcessors";
 import { getAvailableYears } from "@/utils/yearExtractor";
 import { logger } from "@/utils/logger";
@@ -25,61 +21,38 @@ import { logger } from "@/utils/logger";
 // Import components
 import StatisticsCards from "@/components/analytics/StatisticsCards";
 import CumulativeGrowthChart from "@/components/analytics/CumulativeGrowthChart";
-import TrackerStatusChart from "@/components/analytics/TrackerStatusChart";
 import SamplesByCancerTypeChart from "@/components/analytics/SamplesByCancerTypeChart";
 import SampleCountsByDataTypeChart from "@/components/analytics/SampleCountsByDataTypeChart";
 import NewDataReleaseChart from "@/components/analytics/NewDataReleaseChart";
+import PipelineFunnelChart from "@/components/analytics/PipelineFunnelChart";
+import SubmissionVolumeChart from "@/components/analytics/SubmissionVolumeChart";
+import AvgTimePerStageChart from "@/components/analytics/AvgTimePerStageChart";
 
-// Import tracker data
+// Import tracker data (still used for cumulative growth)
 import issuesData from "@/data/issues.txt?raw";
 import pullRequestsData from "@/data/pull_requests.txt?raw";
-import sampleCountCancerTypeData from "@/data/Sample_count_cancer_type.csv?raw";
-import sampleCountByDataTypeData from "@/data/Sample_count_by_Data_Type.csv?raw";
 
-/**
- * Format the current date and time for display
- */
 const formatLastUpdated = (): string => {
   const now = new Date();
-  const formattedDate = now.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-  const formattedTime = now.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
-  return `${formattedDate} at ${formattedTime}`;
+  return `${now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} at ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
 };
 
 const Analytics = () => {
   const [lastUpdated, setLastUpdated] = useState<string>("");
-  const [selectedYear, setSelectedYear] = useState<number>(2024);
+  const [selectedYear, setSelectedYear] = useState<number>(2018);
   const [dataError, setDataError] = useState<boolean>(false);
 
-  // Set last updated time when component mounts
-  useEffect(() => {
-    setLastUpdated(formatLastUpdated());
-  }, []);
+  useEffect(() => { setLastUpdated(formatLastUpdated()); }, []);
 
-  // Parse CSV data for samples by cancer type
-  const samplesByCancerType = useMemo(() => {
-    try {
-      return parseSampleCountData(sampleCountCancerTypeData);
-    } catch (error) {
-      logger.error("Error parsing sample count cancer type data:", error);
-      toast.error("Failed to load cancer type data");
-      return [];
-    }
-  }, []);
+  const { data: samplesByCancerType = [] } = useQuery({
+    queryKey: ['cancer-type-samples'],
+    queryFn: () => fetchCancerTypeSamples(20),
+  });
 
-  // Parse tracker data with error handling
+  // Parse tracker data (for cumulative growth chart only)
   const { trackerPapers, trackerData } = useMemo(() => {
     let papers: any[] = [];
     let data: any[] = [];
-
     try {
       papers = parseIssuesData(issuesData);
       data = parsePullRequestsData(pullRequestsData);
@@ -88,32 +61,19 @@ const Analytics = () => {
       toast.error("Failed to load submission tracker data");
       setDataError(true);
     }
-
     return { trackerPapers: papers, trackerData: data };
   }, []);
 
-  // Fetch cBioPortal data with error handling
-  const { data: studies, isLoading: studiesLoading, error: studiesError } = useQuery({
-    queryKey: ['cancer-studies'],
-    queryFn: fetchCancerStudies,
+  useQuery({ queryKey: ['studies-count'], queryFn: fetchStudiesCount });
+  const { data: samplesCount, isLoading: samplesLoading } = useQuery({ queryKey: ['samples-count'], queryFn: fetchSamples });
+  const { data: studies, isLoading: studiesLoading, error: studiesError } = useQuery({ queryKey: ['cancer-studies'], queryFn: fetchCancerStudies });
+  const { isLoading: typesLoading } = useQuery({ queryKey: ['cancer-types'], queryFn: fetchCancerTypes });
+  const { data: sampleCountsByDataType = [], isLoading: sampleCountsLoading } = useQuery({
+    queryKey: ['sample-counts-by-datatype', selectedYear],
+    queryFn: () => fetchSampleCountsByDataType(selectedYear),
   });
+  const { data: studySampleCounts = {} } = useQuery({ queryKey: ['study-sample-counts'], queryFn: fetchStudySampleCounts });
 
-  const { data: cancerTypes, isLoading: typesLoading } = useQuery({
-    queryKey: ['cancer-types'],
-    queryFn: fetchCancerTypes,
-  });
-
-  const { data: samples, isLoading: samplesLoading } = useQuery({
-    queryKey: ['samples'],
-    queryFn: fetchSamples,
-  });
-
-  const { data: sampleLists, isLoading: sampleListsLoading } = useQuery({
-    queryKey: ['sample-lists'],
-    queryFn: fetchSampleLists,
-  });
-
-  // Show error toast if studies fail to load
   useEffect(() => {
     if (studiesError) {
       logger.error("Error fetching studies:", studiesError);
@@ -121,45 +81,30 @@ const Analytics = () => {
     }
   }, [studiesError]);
 
-  // Calculate unique cancer types from studies (excluding mixed type)
   const uniqueCancerTypesFromStudies = useMemo(() => {
     if (!studies) return 0;
-    
-    const uniqueCancerTypeIds = new Set(
-      studies
-        .filter((study: any) => study.cancerTypeId && study.cancerTypeId !== 'mixed')
-        .map((study: any) => study.cancerTypeId)
-    );
-    
-    return uniqueCancerTypeIds.size;
+    return new Set(studies.filter((s: any) => s.cancerTypeId && s.cancerTypeId !== 'mixed').map((s: any) => s.cancerTypeId)).size;
   }, [studies]);
 
-  // Calculate totals
-  const totalSamples = samples || 0;
+  const totalSamples = samplesCount || 0;
 
-  // Process data for charts
-  const trackerStatusData = useMemo(() => {
-    return processTrackerStatusData(trackerPapers, trackerData);
-  }, [trackerPapers, trackerData]);
+  const { cumulativeGrowthData, unknownYearCount } = useMemo(() => {
+    if (!studies) return { cumulativeGrowthData: [], unknownYearCount: 0 };
+    const enrichedStudies = studies.map((study: any) => ({
+      ...study,
+      allSampleCount: studySampleCounts[study.studyId] ?? 0,
+    }));
+    const result = processCumulativeGrowthData(enrichedStudies);
+    return { cumulativeGrowthData: result.data, unknownYearCount: result.unknownYearCount };
+  }, [studies, studySampleCounts]);
 
-  const { data: cumulativeGrowthData, unknownYearCount } = useMemo(() => {
-    return processCumulativeGrowthData(studies || []);
-  }, [studies]);
-
-  // Process sample counts by data type for the selected year
-  const sampleCountsByDataType = useMemo(() => {
-    return processSampleCountsByDataType(sampleLists || [], studies || [], selectedYear);
-  }, [sampleLists, studies, selectedYear]);
-
-  // Get available years from studies using utility
   const availableYears = useMemo(() => {
-    if (!studies) return [2024];
+    if (!studies) return [2018];
     return getAvailableYears(studies);
   }, [studies]);
 
-  const isLoading = studiesLoading || typesLoading || samplesLoading || sampleListsLoading;
+  const isLoading = studiesLoading || typesLoading || samplesLoading;
 
-  // Show error state if critical data failed to load
   if (dataError && !studies) {
     return (
       <SharedLayout>
@@ -167,13 +112,8 @@ const Analytics = () => {
           <div className="max-w-6xl mx-auto">
             <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
               <h2 className="text-2xl font-bold text-red-800 mb-2">Unable to Load Analytics Data</h2>
-              <p className="text-red-600 mb-4">
-                There was an error loading the analytics data. Please try refreshing the page.
-              </p>
-              <button
-                onClick={() => window.location.reload()}
-                className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors"
-              >
+              <p className="text-red-600 mb-4">There was an error loading the analytics data. Please try refreshing the page.</p>
+              <button onClick={() => window.location.reload()} className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors">
                 Refresh Page
               </button>
             </div>
@@ -187,13 +127,14 @@ const Analytics = () => {
     <SharedLayout>
       <div className="container mx-auto px-6 py-8 bg-gray-50 min-h-screen">
         <div className="max-w-6xl mx-auto">
+
+          {/* Page header */}
           <div className="mb-8">
-            <h1 className="text-4xl font-bold mb-4 text-gray-900">cBioPortal Studies Analytics Dashboard</h1>
-            <p className="text-gray-600 text-lg mb-4">
-              A snapshot of current and upcoming cancer genomics studies in cBioPortal
-            </p>
+            <h1 className="text-4xl font-bold mb-4" style={{ color: '#1A3B6D' }}>cBioPortal Studies Analytics Dashboard</h1>
+            <p className="text-gray-600 text-lg mb-4">A snapshot of current and upcoming cancer genomics studies in cBioPortal</p>
           </div>
 
+          {/* Stat cards */}
           <StatisticsCards
             studies={studies}
             totalSamples={totalSamples}
@@ -202,41 +143,35 @@ const Analytics = () => {
             isLoading={isLoading}
           />
 
+          {/* Cumulative Growth + New Data Release */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <CumulativeGrowthChart 
-              data={cumulativeGrowthData} 
-              unknownYearCount={unknownYearCount} 
-            />
+            <CumulativeGrowthChart data={cumulativeGrowthData} unknownYearCount={unknownYearCount} />
             <NewDataReleaseChart />
           </div>
 
-          {/* Samples by Cancer Type Chart */}
+          {/* Samples by Cancer Type */}
           <div className="mb-8">
-            <SamplesByCancerTypeChart 
-              data={samplesByCancerType}
-              isLoading={false}
-            />
+            <SamplesByCancerTypeChart data={samplesByCancerType} isLoading={false} />
           </div>
 
-          {/* Sample Counts by Data Type and Tracker Status Charts in same row */}
+          {/* Sample Counts by Data Type + Pipeline Funnel side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <SampleCountsByDataTypeChart 
+            <SampleCountsByDataTypeChart
               data={sampleCountsByDataType}
               selectedYear={selectedYear}
               availableYears={availableYears}
               onYearChange={setSelectedYear}
-              isLoading={isLoading}
+              isLoading={sampleCountsLoading}
             />
-            
-            {isLoading ? (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                <p className="mt-4 text-gray-600">Loading cBioPortal data...</p>
-              </div>
-            ) : (
-              <TrackerStatusChart data={trackerStatusData} />
-            )}
+            <PipelineFunnelChart />
           </div>
+
+          {/* Submission Volume + Avg Time per Stage side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <SubmissionVolumeChart />
+            <AvgTimePerStageChart />
+          </div>
+
         </div>
       </div>
     </SharedLayout>

@@ -1,21 +1,31 @@
 # Dependencies
 node_modules/
 
-# Environment variables (contains secrets!)
+# Env
 .env
 .env.local
 .env.production
+.env.*.local
+
+# LevelDB runtime data
+data/
+data-submissions/
+
+# Uploaded files
+uploads/
 
 # Logs
 logs/
 *.log
 npm-debug.log*
 
-# OS files
+# Build output
+dist/
+build/
+
+# OS
 .DS_Store
 Thumbs.db
-
-# IDE
 .vscode/
 .idea/
 *.swp
@@ -23,10 +33,3 @@ Thumbs.db
 
 # Test coverage
 coverage/
-
-# Build output
-dist/
-build/
-
-# Uploads (if storing locally)
-uploads/

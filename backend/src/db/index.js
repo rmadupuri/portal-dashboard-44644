@@ -7,12 +7,21 @@
  * - sessions: Active session tokens (optional)
  */
 
+import { createClient } from '@clickhouse/client';
 import { Level } from 'level';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ClickHouse client for cgds_public_blue
+export const clickhouseClient = createClient({
+  url: process.env.CLICKHOUSE_HOST || 'https://dl96orhu96.us-east-1.aws.clickhouse.cloud',
+  username: process.env.CLICKHOUSE_USERNAME || 'default',
+  password: process.env.CLICKHOUSE_PASSWORD || '',
+  database: process.env.CLICKHOUSE_DATABASE || 'cgds_public_blue',
+});
 
 // Database path - stores in project root/data directory
 const dbPath = path.join(__dirname, '../../data');

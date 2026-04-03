@@ -1,7 +1,15 @@
-
-
 import React from 'react';
-import { ResponsiveContainer, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line } from 'recharts';
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  Line,
+  Bar,
+} from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface CumulativeGrowthChartProps {
@@ -9,101 +17,138 @@ interface CumulativeGrowthChartProps {
   unknownYearCount: number;
 }
 
-const CumulativeGrowthChart: React.FC<CumulativeGrowthChartProps> = ({ data, unknownYearCount }) => {
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
   return (
-    <Card className="bg-white shadow-lg">
+    <div style={{
+      background: 'white',
+      border: '1px solid #e0e0e0',
+      borderRadius: '8px',
+      padding: '10px 14px',
+      fontSize: '12px',
+      boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08)',
+    }}>
+      <p style={{ fontWeight: 600, marginBottom: 6, color: '#444' }}>Year: {label}</p>
+      {payload.map((entry: any) => (
+        <p key={entry.dataKey} style={{ color: entry.color, margin: '2px 0' }}>
+          {entry.name}:{' '}
+          <strong>
+            {typeof entry.value === 'number'
+              ? entry.value >= 1000
+                ? `${(entry.value / 1000).toFixed(1)}K`
+                : entry.value.toLocaleString()
+              : entry.value}
+          </strong>
+        </p>
+      ))}
+    </div>
+  );
+};
+
+const CumulativeGrowthChart: React.FC<CumulativeGrowthChartProps> = ({ data }) => {
+  return (
+    <Card className="bg-white shadow-md border border-slate-100">
       <CardHeader>
-        <CardTitle className="text-xl font-bold text-gray-900">Cumulative Growth Over Time</CardTitle>
-        {unknownYearCount > 0 && (
-          <p className="text-sm text-gray-500">
-            Note: {unknownYearCount} studies have no known publication year and are excluded from this chart.
-          </p>
-        )}
+        <CardTitle className="text-base font-semibold text-slate-700">
+          Cumulative Growth Over Time
+        </CardTitle>
+        <p className="text-xs text-gray-400">
+          Bars: studies added per year · Lines: cumulative totals
+        </p>
       </CardHeader>
       <CardContent>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart
-              data={data}
-              margin={{ left: 10, right: 60, top: 20, bottom: 20 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <ComposedChart data={data} margin={{ left: 10, right: 55, top: 10, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+
               <XAxis
                 dataKey="year"
-                domain={['dataMin', 'dataMax']}
                 type="category"
-                tick={{ fontSize: 11, fill: '#666' }}
+                tick={{ fontSize: 11, fill: '#888' }}
                 axisLine={{ stroke: '#e0e0e0' }}
+                tickLine={false}
               />
+
+              {/*
+               * LEFT axis — studies scale (0–600)
+               * Used by: New Studies bars + Total Studies line
+               * These two share a scale because both count studies
+               */}
               <YAxis
-                yAxisId="studies"
+                yAxisId="left"
                 orientation="left"
-                stroke="#4A90E2"
-                tick={{ fontSize: 11, fill: '#666' }}
-                axisLine={{ stroke: '#e0e0e0' }}
+                tick={{ fontSize: 10, fill: '#888' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => v.toLocaleString()}
+                width={38}
                 label={{
                   value: 'Studies',
                   angle: -90,
                   position: 'insideLeft',
-                  style: { textAnchor: 'middle', fill: '#4A90E2', fontSize: '12px' },
+                  offset: 5,
+                  style: { textAnchor: 'middle', fill: '#888', fontSize: '10px' },
                 }}
               />
+
+              {/*
+               * RIGHT axis — samples scale (0–400K)
+               * Used by: Total Samples line only
+               */}
               <YAxis
-                yAxisId="samples"
+                yAxisId="right"
                 orientation="right"
-                stroke="#50C878"
-                tick={{ fontSize: 11, fill: '#666' }}
-                axisLine={{ stroke: '#e0e0e0' }}
+                tick={{ fontSize: 10, fill: '#d95f02' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => v >= 1000 ? `${Math.round(v / 1000)}K` : v.toLocaleString()}
+                width={45}
                 label={{
                   value: 'Samples',
                   angle: 90,
                   position: 'insideRight',
-                  offset: -10,
-                  style: { textAnchor: 'middle', fill: '#50C878', fontSize: '12px' },
+                  offset: -5,
+                  style: { textAnchor: 'middle', fill: '#d95f02', fontSize: '10px' },
                 }}
               />
-              <Tooltip
-                contentStyle={{ 
-                  fontSize: '12px',
-                  backgroundColor: 'white',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                }}
-                formatter={(value, name) => {
-                  const displayNames = {
-                    cumulativeStudies: 'Studies',
-                    cumulativeSamples: 'Samples'
-                  };
-                  return [
-                    typeof value === 'number' ? value.toLocaleString() : value,
-                    displayNames[name as keyof typeof displayNames] || name
-                  ];
-                }}
-                labelFormatter={(year) => `Year: ${year}`}
+
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+
+              {/* Bars — new studies added per year (left axis) */}
+              <Bar
+                yAxisId="left"
+                dataKey="newStudies"
+                name="New Studies / Year"
+                fill="#7570b3"
+                fillOpacity={0.6}
+                radius={[3, 3, 0, 0]}
+                barSize={16}
               />
-              <Legend
-                wrapperStyle={{ fontSize: '12px' }}
-                payload={[
-                  { value: 'Studies', type: 'line', id: 'ID01', color: '#4A90E2' },
-                  { value: 'Samples', type: 'line', id: 'ID02', color: '#50C878' },
-                ]}
-              />
+
+              {/* Line — cumulative total studies (left axis, same scale as bars) */}
               <Line
-                yAxisId="studies"
+                yAxisId="left"
                 type="monotone"
                 dataKey="cumulativeStudies"
-                stroke="#4A90E2"
-                strokeWidth={2}
+                name="Total Studies"
+                stroke="#1b9e77"
+                strokeWidth={2.5}
                 dot={false}
+                activeDot={{ r: 4, strokeWidth: 0 }}
               />
+
+              {/* Line — cumulative total samples (right axis) */}
               <Line
-                yAxisId="samples"
+                yAxisId="right"
                 type="monotone"
                 dataKey="cumulativeSamples"
-                stroke="#50C878"
-                strokeWidth={2}
+                name="Total Samples"
+                stroke="#d95f02"
+                strokeWidth={2.5}
                 dot={false}
+                activeDot={{ r: 4, strokeWidth: 0 }}
               />
             </ComposedChart>
           </ResponsiveContainer>

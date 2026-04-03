@@ -1,305 +1,40 @@
-# 🎉 COMPLETE SYSTEM READY!
-
-## ✅ What's Working
-
-### Frontend (http://localhost:8080)
-- ✅ Login page with Google & GitHub buttons
-- ✅ All routes configured
-- ✅ Connects to backend API
-- ✅ Environment variables configured
-
-### Backend (http://localhost:5000)  
-- ✅ LevelDB database setup
-- ✅ User authentication (email/password)
-- ✅ JWT token system
-- ✅ Role-based access control
-- ✅ Submission tracking API
-- ✅ Data filtering by user role
-
 ## 🚀 Quick Start
+
+### Configure Environment Variables (one time)
+1. Rename the example env files so you have real ones to edit:
+   ```bash
+   mv backend/.env.example backend/.env
+   mv frontend/.env.example frontend/.env
+   ```
+2. Generate Google OAuth credentials:
+   - Open the [Google Cloud Console](https://console.cloud.google.com/), choose your project (or create one), and go to **APIs & Services → OAuth consent screen** to set up the consent screen (add `localhost` to Authorized domains).
+   - Still in **APIs & Services**, open **Credentials → Create Credentials → OAuth client ID**, pick **Web application**, add `http://localhost:8080` to Authorized JavaScript origins, and `http://localhost:5001/api/auth/google/callback` to Authorized redirect URIs.
+   - Copy the Client ID/Secret into `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` inside `backend/.env`.
+3. Generate GitHub OAuth credentials:
+   - Navigate to [GitHub Developer Settings](https://github.com/settings/developers), choose **OAuth Apps → New OAuth App**, set the Homepage URL to `http://localhost:8080`, and set the Authorization callback URL to `http://localhost:5001/api/auth/github/callback`.
+   - After creation grab the **Client ID** and **Client Secret**, then paste them into `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `backend/.env`.
+4. Create a JWT secret for signing tokens:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+   ```
+   Put the generated string into `JWT_SECRET=` in `backend/.env` (keep `JWT_EXPIRE=7d` unless you need a different lifetime).
+5. Double-check the rest of `backend/.env` matches your local URLs (`BACKEND_URL=http://localhost:5001`, `FRONTEND_URL=http://localhost:8080`) and save the file. No other commands will work until this file is in place.
 
 ### Terminal 1: Start Backend
 ```bash
-cd /Users/madupurr/Github/portal-dashboard-44644/backend
+cd Github/portal-dashboard-44644/backend
 npm install
 npm run dev
 ```
 
 ### Terminal 2: Start Frontend
 ```bash
-cd /Users/madupurr/Github/portal-dashboard-44644/frontend
+cd Github/portal-dashboard-44644/frontend
+npm install
 npm run dev
 ```
 
 ### Open Browser
 - Frontend: http://localhost:8080
 - Login page: http://localhost:8080/login
-- Backend API: http://localhost:5000
-
-## 🎯 User Roles Explained
-
-### 1. Common Users (`role: 'user'`)
-**What they can do:**
-- Register and login
-- Create submissions
-- View their own submissions (full details)
-- View ALL submissions but with LIMITED columns:
-  - ✅ Study ID
-  - ✅ Cancer Type
-  - ✅ Status
-  - ✅ Submission Date
-  - ❌ Contact info (hidden)
-  - ❌ Institution details (hidden)
-  - ❌ File URLs (hidden)
-
-### 2. Super Users (`role: 'super'`)
-**What they can do:**
-- Everything common users can do PLUS:
-- View ALL columns in tracker
-- Approve/reject submissions
-- Manage users (change roles, delete users)
-- View statistics
-- Access user management endpoints
-
-## 📝 Creating Your First Users
-
-### Step 1: Register a Common User
-```bash
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "commonuser@example.com",
-    "password": "password123",
-    "name": "Common User",
-    "institution": "University X"
-  }'
-```
-
-Response will include a JWT token.
-
-### Step 2: Register a Super User
-**First register normally, then you'll need to manually upgrade:**
-
-```bash
-# 1. Register
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@example.com",
-    "password": "admin123",
-    "name": "Super Admin"
-  }'
-
-# 2. Login with first user and use their token to upgrade second user
-# (You'll need to implement a way to bootstrap the first super user)
-```
-
-**Temporary Solution:** Modify the register endpoint to allow creating super users during development.
-
-## 🧪 Testing the System
-
-### 1. Test Login Page (Frontend)
-```bash
-# Visit: http://localhost:8080/login
-# You should see Google and GitHub login buttons
-# They will redirect to backend OAuth endpoints
-```
-
-### 2. Test Backend Health
-```bash
-curl http://localhost:5000/api/health
-```
-
-### 3. Test Registration
-```bash
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "password": "test123",
-    "name": "Test User"
-  }'
-```
-
-### 4. Test Login
-```bash
-curl -X POST http://localhost:5000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "password": "test123"
-  }'
-```
-
-Save the `token` from the response!
-
-### 5. Test Tracker (with token)
-```bash
-# Replace <TOKEN> with your actual token
-curl http://localhost:5000/api/tracker \
-  -H "Authorization: Bearer <TOKEN>"
-```
-
-### 6. Create a Submission
-```bash
-curl -X POST http://localhost:5000/api/tracker \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "studyId": "BRCA_2024",
-    "cancerType": "Breast Cancer",
-    "contactName": "Dr. Jane Smith",
-    "contactEmail": "jane.smith@university.edu",
-    "institutionName": "Stanford University",
-    "dataType": "Mutation Data",
-    "sampleCount": 150,
-    "validationNotes": "All samples passed QC"
-  }'
-```
-
-## 📊 Data Filtering in Action
-
-### Common User Views Tracker:
-```json
-{
-  "submissions": [
-    {
-      "id": "submission_123",
-      "studyId": "BRCA_2024",
-      "cancerType": "Breast Cancer",
-      "status": "pending",
-      "submissionDate": "2025-01-15"
-    }
-  ]
-}
-```
-
-### Super User Views Same Data:
-```json
-{
-  "submissions": [
-    {
-      "id": "submission_123",
-      "studyId": "BRCA_2024",
-      "cancerType": "Breast Cancer",
-      "status": "pending",
-      "submissionDate": "2025-01-15",
-      "contactName": "Dr. Jane Smith",
-      "contactEmail": "jane.smith@university.edu",
-      "institutionName": "Stanford University",
-      "dataType": "Mutation Data",
-      "sampleCount": 150,
-      "validationNotes": "All samples passed QC",
-      "fileUrl": "s3://bucket/file.maf"
-    }
-  ]
-}
-```
-
-## 🗄️ Database Location
-
-LevelDB stores data in:
-```
-backend/data/
-├── users/        - User accounts
-├── submissions/  - Data submissions
-└── sessions/     - Session tokens
-```
-
-This directory is created automatically on first run.
-
-## 📁 Complete Project Structure
-
-```
-portal-dashboard-44644/
-├── frontend/
-│   ├── src/
-│   │   ├── pages/
-│   │   │   └── Login.tsx         ✅ Working
-│   │   ├── components/           ✅ All components
-│   │   └── App.tsx              ✅ Routes configured
-│   ├── .env                      ✅ Backend URL configured
-│   └── package.json              ✅ All dependencies
-│
-├── backend/
-│   ├── src/
-│   │   ├── db/
-│   │   │   ├── index.js          ✅ LevelDB setup
-│   │   │   ├── users.js          ✅ User operations
-│   │   │   └── submissions.js    ✅ Submission operations
-│   │   ├── middleware/
-│   │   │   ├── auth.js           ✅ JWT authentication
-│   │   │   └── roleCheck.js      ✅ Role-based access
-│   │   ├── routes/
-│   │   │   ├── authRoutes.js     ✅ Login/Register
-│   │   │   ├── trackerRoutes.js  ✅ Submissions CRUD
-│   │   │   └── userRoutes.js     ✅ User management
-│   │   ├── utils/
-│   │   │   ├── jwt.js            ✅ Token helpers
-│   │   │   └── filters.js        ✅ Data filtering
-│   │   ├── config/
-│   │   │   └── passport.js       ✅ OAuth config
-│   │   └── server.js             ✅ Main server
-│   ├── data/                     🔄 Created automatically
-│   ├── .env                      ✅ Configuration
-│   └── package.json              ✅ All dependencies
-│
-└── README files
-    ├── BACKEND_FIXED_README.md   📖 Backend guide
-    ├── LOGIN_SETUP_COMPLETE.md   📖 Frontend guide
-    └── QUICK_START.md            📖 This file
-```
-
-## 🎓 Learning Resources
-
-### Understanding the Stack
-- **LevelDB**: Simple key-value database (no server needed!)
-- **JWT**: Tokens for authentication (instead of sessions)
-- **Express**: Web framework for Node.js
-- **React**: Frontend framework
-
-### How Authentication Works
-1. User registers → Password hashed → Stored in LevelDB
-2. User logs in → Password verified → JWT token created
-3. User makes requests → Token verified → Access granted/denied
-4. Token includes role → Controls what data user can see
-
-### How Role-Based Access Works
-1. Every user has a `role` field: 'user' or 'super'
-2. Middleware checks role before allowing access
-3. Data filtering removes sensitive fields for common users
-4. Super users bypass all filters
-
-## 🔧 Common Issues & Solutions
-
-### "Cannot find module 'level'"
-```bash
-cd backend && npm install
-```
-
-### "Port already in use"
-```bash
-lsof -ti:5000 | xargs kill -9  # Kill backend
-lsof -ti:8080 | xargs kill -9  # Kill frontend
-```
-
-### "Authorization header missing"
-Make sure you include the token:
-```bash
-Authorization: Bearer <your_token>
-```
-
-### "Access denied"
-Check if you're using the right user role for the endpoint.
-
-## 🚀 You're All Set!
-
-**Start both servers and test the system!**
-
-1. ✅ Backend runs on port 5000
-2. ✅ Frontend runs on port 8080  
-3. ✅ Login page works
-4. ✅ Role-based access works
-5. ✅ All APIs are ready
-
-**Happy coding!** 🎉
+- Backend API: http://localhost:5001

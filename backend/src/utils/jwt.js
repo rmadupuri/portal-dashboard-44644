@@ -16,10 +16,13 @@ const JWT_EXPIRE = process.env.JWT_EXPIRE || '7d';
  */
 export function generateToken(user) {
   const payload = {
-    id: user.id,
+    id: user.id || null, // May be null for guest users
     email: user.email,
     role: user.role,
-    name: user.name
+    name: user.name,
+    provider: user.provider,
+    providerId: user.providerId,
+    isTemporary: user.isTemporary || false
   };
 
   return jwt.sign(payload, JWT_SECRET, {

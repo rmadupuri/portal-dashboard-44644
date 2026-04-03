@@ -16,7 +16,8 @@ export function requireSuper(req, res, next) {
     });
   }
 
-  if (req.user.role !== 'super') {
+  // Guest users cannot be super users
+  if (req.user.isTemporary || req.user.role !== 'super') {
     return res.status(403).json({
       status: 'error',
       message: 'Access denied. Super user privileges required.'

@@ -1,233 +1,110 @@
-const CBIOPORTAL_API_BASE = "https://www.cbioportal.org/api";
+const CBIOPORTAL_API = "https://www.cbioportal.org/api";
+const BACKEND_URL = () => import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
-/**
- * Fetch all cancer studies from cBioPortal
- */
+// ─── cBioPortal public API ───────────────────────────────────────────────────
+
 export const fetchCancerStudies = async () => {
-  try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/studies`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch cancer studies: ${response.status}`);
-    }
-    return await response.json();
-  } catch (error) {
-    console.error("Error fetching cancer studies:", error);
-    throw error;
-  }
+  const r = await fetch(`${CBIOPORTAL_API}/studies?projection=SUMMARY`);
+  if (!r.ok) throw new Error(`Failed to fetch cancer studies: ${r.status}`);
+  return r.json();
 };
 
-/**
- * Fetch cancer types from cBioPortal - returns full array for chart processing
- */
 export const fetchCancerTypes = async () => {
+  const r = await fetch(`${CBIOPORTAL_API}/cancer-types`);
+  if (!r.ok) throw new Error(`Failed to fetch cancer types: ${r.status}`);
+  return r.json();
+};
+
+export const fetchStudiesCount = async (): Promise<number> => {
+  const r = await fetch(`${CBIOPORTAL_API}/studies?projection=META`);
+  if (!r.ok) throw new Error(`Failed to fetch studies count: ${r.status}`);
+  return parseInt(r.headers.get('Total-Count') || '0', 10);
+};
+
+export const fetchSamples = async (): Promise<number> => {
+  const r = await fetch(`${CBIOPORTAL_API}/samples?projection=META`);
+  if (!r.ok) throw new Error(`Failed to fetch samples count: ${r.status}`);
+  return parseInt(r.headers.get('Total-Count') || '0', 10);
+};
+
+export const fetchPatientsCount = async (): Promise<number> => {
+  const r = await fetch(`${CBIOPORTAL_API}/patients?projection=META`);
+  if (!r.ok) throw new Error(`Failed to fetch patients count: ${r.status}`);
+  return parseInt(r.headers.get('Total-Count') || '0', 10);
+};
+
+// ─── Backend / ClickHouse ────────────────────────────────────────────────────
+
+export const fetchStudySampleCounts = async (): Promise<Record<string, number>> => {
   try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/cancer-types`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch cancer types: ${response.status}`);
-    }
-    return await response.json();
+    const r = await fetch(`${BACKEND_URL()}/api/analytics/study-sample-counts`);
+    if (!r.ok) throw new Error(`Failed to fetch study sample counts: ${r.status}`);
+    return (await r.json()).data;
   } catch (error) {
-    console.error("Error fetching cancer types:", error);
+    console.error('Error fetching study sample counts:', error);
+    return {};
+  }
+};
+
+export const fetchCancerTypeSamples = async (limit = 20): Promise<Array<{ cancerTypeId: string; name: string; samples: number; studies: number }>> => {
+  try {
+    const r = await fetch(`${BACKEND_URL()}/api/analytics/cancer-type-samples?limit=${limit}`);
+    if (!r.ok) throw new Error(`Failed to fetch cancer type samples: ${r.status}`);
+    return (await r.json()).data;
+  } catch (error) {
+    console.error('Error fetching cancer type samples:', error);
     throw error;
   }
 };
 
-/**
- * Fetch unique cancer types count from cBioPortal
- */
-export const fetchCancerTypesCount = async () => {
+export const fetchSampleCountsByDataType = async (year: number): Promise<Array<{ name: string; count: number }>> => {
   try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/cancer-types`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch cancer types: ${response.status}`);
-    }
-    const cancerTypes = await response.json();
-    
-    // Count unique cancer types by cancerTypeId
-    const uniqueCancerTypeIds = new Set(cancerTypes.map((type: any) => type.cancerTypeId));
-    return uniqueCancerTypeIds.size;
+    const r = await fetch(`${BACKEND_URL()}/api/analytics/sample-counts-by-datatype?year=${year}`);
+    if (!r.ok) throw new Error(`Failed to fetch sample counts by data type: ${r.status}`);
+    return (await r.json()).data;
   } catch (error) {
-    console.error("Error fetching cancer types:", error);
-    throw error;
-  }
-};
-
-/**
- * Fetch unique patient count from cBioPortal
- */
-export const fetchPatients = async () => {
-  try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/patients`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch patients: ${response.status}`);
-    }
-    const patients = await response.json();
-    
-    // Count unique patients by PatientID
-    const uniquePatientIds = new Set(patients.map((patient: any) => patient.patientId));
-    return uniquePatientIds.size;
-  } catch (error) {
-    console.error("Error fetching patients:", error);
-    throw error;
-  }
-};
-
-/**
- * Fetch unique sample count from cBioPortal
- */
-export const fetchSamples = async () => {
-  try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/samples`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch samples: ${response.status}`);
-    }
-    const samples = await response.json();
-    
-    // Count unique samples by sampleId
-    const uniqueSampleIds = new Set(samples.map((sample: any) => sample.sampleId));
-    return uniqueSampleIds.size;
-  } catch (error) {
-    console.error("Error fetching samples:", error);
-    throw error;
-  }
-};
-
-/**
- * Fetch sample counts for a study
- */
-export const fetchSampleCounts = async (studyId: string) => {
-  try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/studies/${studyId}/sample-counts`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch sample counts: ${response.status}`);
-    }
-    return await response.json();
-  } catch (error) {
-    console.error("Error fetching sample counts:", error);
-    throw error;
-  }
-};
-
-/**
- * Fetch samples grouped by sample type from cBioPortal
- */
-export const fetchSamplesByType = async () => {
-  try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/samples`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch samples: ${response.status}`);
-    }
-    const samples = await response.json();
-    
-    // Group samples by sampleType and count them
-    const sampleTypeGroups = samples.reduce((acc: any, sample: any) => {
-      const sampleType = sample.sampleType || 'Unknown';
-      if (!acc[sampleType]) {
-        acc[sampleType] = 0;
-      }
-      acc[sampleType]++;
-      return acc;
-    }, {});
-
-    return Object.entries(sampleTypeGroups)
-      .map(([name, count]) => ({ name, count: count as number }))
-      .sort((a, b) => b.count - a.count);
-  } catch (error) {
-    console.error("Error fetching samples by type:", error);
-    throw error;
-  }
-};
-
-/**
- * Fetch sample lists from cBioPortal
- */
-export const fetchSampleLists = async () => {
-  try {
-    const response = await fetch(`${CBIOPORTAL_API_BASE}/sample-lists`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch sample lists: ${response.status}`);
-    }
-    return await response.json();
-  } catch (error) {
-    console.error("Error fetching sample lists:", error);
-    throw error;
-  }
-};
-
-/**
- * Fetch samples grouped by cancer type from cBioPortal following the proper API approach
- */
-export const fetchSamplesByCancerType = async (): Promise<Array<{ name: string; samples: number; studies: number; cancerTypeId: string }>> => {
-  try {
-    // Step 1: Get all studies with summary projection
-    const studiesResponse = await fetch(`${CBIOPORTAL_API_BASE}/studies?projection=SUMMARY`);
-    if (!studiesResponse.ok) {
-      throw new Error(`Failed to fetch studies: ${studiesResponse.status}`);
-    }
-    const studies = await studiesResponse.json();
-
-    // Step 2: Get all cancer types for name mapping
-    const cancerTypesResponse = await fetch(`${CBIOPORTAL_API_BASE}/cancer-types`);
-    if (!cancerTypesResponse.ok) {
-      throw new Error(`Failed to fetch cancer types: ${cancerTypesResponse.status}`);
-    }
-    const cancerTypes = await cancerTypesResponse.json();
-
-    // Step 3: Create cancer type name mapping
-    const cancerTypeNameMap: Record<string, string> = {};
-    cancerTypes.forEach((type: any) => {
-      cancerTypeNameMap[type.cancerTypeId] = type.name;
-    });
-
-    // Step 4: Get sample lists to count samples per study
-    const sampleListsResponse = await fetch(`${CBIOPORTAL_API_BASE}/sample-lists`);
-    if (!sampleListsResponse.ok) {
-      throw new Error(`Failed to fetch sample lists: ${sampleListsResponse.status}`);
-    }
-    const sampleLists = await sampleListsResponse.json();
-
-    // Step 5: Create sample count mapping per study
-    const studySampleCounts: Record<string, number> = {};
-    
-    // Get sample counts from "all" sample lists for each study
-    sampleLists.forEach((sampleList: any) => {
-      if (sampleList.sampleListId.endsWith('_all') && sampleList.description) {
-        const studyId = sampleList.studyId;
-        // Extract sample count from description using regex
-        const sampleCountMatch = sampleList.description.match(/(\d+)\s+samples?/i);
-        if (sampleCountMatch) {
-          studySampleCounts[studyId] = parseInt(sampleCountMatch[1]);
-        }
-      }
-    });
-
-    // Step 6: Group by cancer type and aggregate data
-    const cancerTypeGroups: Record<string, { name: string; samples: number; studies: number; cancerTypeId: string }> = {};
-    
-    studies.forEach((study: any) => {
-      const cancerTypeId = study.cancerTypeId || 'unknown';
-      const sampleCount = studySampleCounts[study.studyId] || study.allSampleCount || 0;
-      
-      if (!cancerTypeGroups[cancerTypeId]) {
-        cancerTypeGroups[cancerTypeId] = {
-          name: cancerTypeNameMap[cancerTypeId] || cancerTypeId,
-          samples: 0,
-          studies: 0,
-          cancerTypeId: cancerTypeId
-        };
-      }
-      
-      cancerTypeGroups[cancerTypeId].samples += sampleCount;
-      cancerTypeGroups[cancerTypeId].studies += 1;
-    });
-
-    // Step 7: Return sorted results
-    return Object.values(cancerTypeGroups)
-      .filter((group) => group.samples > 0)
-      .sort((a, b) => b.samples - a.samples);
-      
-  } catch (error) {
-    console.error("Error fetching samples by cancer type:", error);
+    console.error('Error fetching sample counts by data type:', error);
     return [];
   }
+};
+
+export const fetchCumulativeGrowth = async (): Promise<Array<{ year: number; studies: number; samples: number }>> => {
+  try {
+    const r = await fetch(`${BACKEND_URL()}/api/analytics/cumulative-growth`);
+    if (!r.ok) throw new Error(`Failed to fetch cumulative growth: ${r.status}`);
+    return (await r.json()).data;
+  } catch (error) {
+    console.error('Error fetching cumulative growth:', error);
+    throw error;
+  }
+};
+
+export const fetchNewsReleases = async () => {
+  try {
+    const r = await fetch(`${BACKEND_URL()}/api/analytics/news-releases`);
+    if (!r.ok) throw new Error(`Failed to fetch news releases: ${r.status}`);
+    const json = await r.json();
+    return { latest: json.latest, releases: json.releases };
+  } catch (error) {
+    console.error('Error fetching news releases:', error);
+    return { latest: null, releases: [] };
+  }
+};
+
+export const fetchPipelineFunnel = async () => {
+  const r = await fetch(`${BACKEND_URL()}/api/analytics/submissions/pipeline-funnel`);
+  if (!r.ok) throw new Error('Failed to fetch pipeline funnel');
+  return (await r.json()).data;
+};
+
+export const fetchSubmissionVolume = async () => {
+  const r = await fetch(`${BACKEND_URL()}/api/analytics/submissions/volume-over-time`);
+  if (!r.ok) throw new Error('Failed to fetch submission volume');
+  return (await r.json()).data;
+};
+
+export const fetchAvgTimePerStage = async () => {
+  const r = await fetch(`${BACKEND_URL()}/api/analytics/submissions/avg-time-per-stage`);
+  if (!r.ok) throw new Error('Failed to fetch avg time per stage');
+  return (await r.json()).data;
 };

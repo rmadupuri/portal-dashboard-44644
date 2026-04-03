@@ -1,15 +1,5 @@
-
 import React from 'react';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Cell
-} from 'recharts';
+import { Treemap, ResponsiveContainer, Tooltip } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
@@ -27,28 +17,112 @@ interface SampleCountsByDataTypeChartProps {
   isLoading: boolean;
 }
 
+// cBioPortal Dark2 palette
 const COLORS = [
-  '#3b82f6',
-  '#ef4444',
-  '#f59e0b',
-  '#10b981',
-  '#8b5cf6',
-  '#06b6d4',
-  '#84cc16',
-  '#f97316'
+  '#1b9e77', '#d95f02', '#7570b3', '#66a61e',
+  '#e6ab02', '#a6761d', '#666666', '#1b9e77',
+  '#d95f02', '#7570b3', '#66a61e', '#e6ab02',
+  '#a6761d', '#666666', '#1b9e77',
 ];
 
-const SampleCountsByDataTypeChart: React.FC<
-  SampleCountsByDataTypeChartProps
-> = ({ data, selectedYear, availableYears, onYearChange, isLoading }) => {
+const CustomContent = (props: any) => {
+  const { x, y, width, height, name, value, depth, index } = props;
+  // Only render leaf nodes (depth > 0), skip root container
+  if (!name || depth === 0 || !width || !height) return null;
+  const color = COLORS[index % COLORS.length];
+  const showLabel = width > 50 && height > 28;
+  const showCount = width > 70 && height > 48;
+  const label = String(name);
+  const maxChars = Math.floor(width / 7);
+
   return (
-    <Card className="bg-white shadow-lg">
+    <g>
+      <rect
+        x={x + 1}
+        y={y + 1}
+        width={width - 2}
+        height={height - 2}
+        fill={color}
+        fillOpacity={0.85}
+        rx={3}
+        stroke="white"
+        strokeWidth={1.5}
+      />
+      {showLabel && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 - (showCount ? 8 : 0)}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill="white"
+          fontSize={Math.min(12, Math.max(9, width / 10))}
+          fontWeight={600}
+          style={{ pointerEvents: 'none' }}
+        >
+          {label.length > maxChars ? label.slice(0, maxChars) + '…' : label}
+        </text>
+      )}
+      {showCount && (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 + 10}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill="white"
+          fontSize={10}
+          fillOpacity={0.85}
+          style={{ pointerEvents: 'none' }}
+        >
+          {value >= 1000 ? `${(value / 1000).toFixed(1)}K` : Number(value).toLocaleString()}
+        </text>
+      )}
+    </g>
+  );
+};
+
+const CustomTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.length) return null;
+  const { name, value } = payload[0].payload;
+  return (
+    <div style={{
+      background: 'white',
+      border: '1px solid #e0e0e0',
+      borderRadius: '8px',
+      padding: '8px 12px',
+      fontSize: '12px',
+      boxShadow: '0 4px 6px -1px rgba(0,0,0,0.08)',
+    }}>
+      <p style={{ fontWeight: 600, color: '#444', marginBottom: 2 }}>{name}</p>
+      <p style={{ color: '#666' }}>{value.toLocaleString()} samples</p>
+    </div>
+  );
+};
+
+const SampleCountsByDataTypeChart: React.FC<SampleCountsByDataTypeChartProps> = ({
+  data,
+  selectedYear,
+  availableYears,
+  onYearChange,
+  isLoading
+}) => {
+  const treemapData = data.map((d, i) => ({
+    name: d.name,
+    size: d.count,
+    value: d.count,
+    colorIndex: i,
+  }));
+
+  return (
+    <Card className="bg-white shadow-md border border-slate-100">
       <CardHeader>
         <div className="flex justify-between items-start">
           <div>
             <CardTitle className="text-xl font-bold text-gray-900">
-              Sample Counts by Data Type ({selectedYear})
+              Sample Counts by Data Type
             </CardTitle>
+            <p className="text-xs text-gray-400 mt-1">
+              Distinct samples per profile type — area proportional to count
+            </p>
           </div>
           <Select
             value={selectedYear.toString()}
@@ -71,78 +145,22 @@ const SampleCountsByDataTypeChart: React.FC<
         <div className="h-80">
           {isLoading ? (
             <div className="flex items-center justify-center h-full">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+            </div>
+          ) : data.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-sm text-gray-400">
+              No data for {selectedYear}
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={data}
-                layout="vertical"
-                margin={{ top: 20, right: 20, left: 30, bottom: 50 }}
+              <Treemap
+                data={treemapData}
+                dataKey="size"
+                aspectRatio={4 / 3}
+                content={<CustomContent />}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-
-                {/* X-axis → numeric values */}
-                <XAxis
-                  type="number"
-                  tick={{ fontSize: 11, fill: '#666' }}
-                  axisLine={{ stroke: '#e0e0e0' }}
-                  tickFormatter={(value) => value.toLocaleString()}
-                  label={{
-                    value: 'Number of Samples',
-                    position: 'insideBottom',
-                    offset: -20,
-                    style: {
-                      textAnchor: 'middle',
-                      fill: '#666',
-                      fontSize: '12px'
-                    }
-                  }}
-                />
-
-                {/* Y-axis → categories with Data Type label */}
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  tick={{ fontSize: 11, fill: '#666' }}
-                  axisLine={{ stroke: '#e0e0e0' }}
-                  width={140}
-                  label={{
-                    value: 'Data Type',
-                    angle: -90,
-                    position: 'insideLeft',
-                    offset: -2,
-                    style: {
-                      textAnchor: 'middle',
-                      fill: '#666',
-                      fontSize: '12px'
-                    }
-                  }}
-                />
-
-                <Tooltip
-                  contentStyle={{
-                    fontSize: '12px',
-                    backgroundColor: 'white',
-                    border: '1px solid #e0e0e0',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                  }}
-                  formatter={(value) => [
-                    value?.toLocaleString(),
-                    'Samples'
-                  ]}
-                />
-
-                <Bar dataKey="count">
-                  {data.map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={COLORS[index % COLORS.length]}
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
+                <Tooltip content={<CustomTooltip />} />
+              </Treemap>
             </ResponsiveContainer>
           )}
         </div>
