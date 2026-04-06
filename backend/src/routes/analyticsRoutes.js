@@ -6,6 +6,7 @@
  */
 
 import express from 'express';
+import fetch from 'node-fetch';
 import { clickhouseClient, submissionsDb } from '../db/index.js';
 
 const router = express.Router();

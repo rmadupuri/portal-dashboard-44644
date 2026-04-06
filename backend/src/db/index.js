@@ -1,13 +1,16 @@
 /**
- * LevelDB Database Setup
+ * LevelDB Database Setup + ClickHouse HTTP Client
  * 
  * Creates three separate LevelDB instances:
  * - users: User accounts and authentication
  * - submissions: Data submission records
  * - sessions: Active session tokens (optional)
+ * 
+ * ClickHouse queries use the HTTP interface via node-fetch
+ * (replaces @clickhouse/client for Node 16 compatibility)
  */
 
-import { createClient } from '@clickhouse/client';
+import fetch from 'node-fetch';
 import { Level } from 'level';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,13 +18,52 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ClickHouse client for cgds_public_blue
-export const clickhouseClient = createClient({
-  url: process.env.CLICKHOUSE_HOST || 'https://dl96orhu96.us-east-1.aws.clickhouse.cloud',
-  username: process.env.CLICKHOUSE_USERNAME || 'default',
-  password: process.env.CLICKHOUSE_PASSWORD || '',
-  database: process.env.CLICKHOUSE_DATABASE || 'cgds_public_blue',
-});
+// ─── Lightweight ClickHouse HTTP client ────────────────────────────────────
+const CH_URL = process.env.CLICKHOUSE_HOST || 'https://dl96orhu96.us-east-1.aws.clickhouse.cloud';
+const CH_USER = process.env.CLICKHOUSE_USERNAME || 'default';
+const CH_PASS = process.env.CLICKHOUSE_PASSWORD || '';
+const CH_DB = process.env.CLICKHOUSE_DATABASE || 'cgds_public_blue';
+
+/**
+ * Minimal ClickHouse client that matches the subset of the official API
+ * used in this project: clickhouseClient.query({ query, format }) → .json()
+ */
+export const clickhouseClient = {
+  query: async ({ query, format = 'JSONEachRow' }) => {
+    const url = new URL('/', CH_URL);
+    url.searchParams.set('database', CH_DB);
+    // Append FORMAT to the SQL so ClickHouse returns the right shape
+    const fullQuery = `${query.trim().replace(/;$/, '')} FORMAT ${format}`;
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        'Authorization': 'Basic ' + Buffer.from(`${CH_USER}:${CH_PASS}`).toString('base64'),
+      },
+      body: fullQuery,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`ClickHouse HTTP error ${response.status}: ${errorBody}`);
+    }
+
+    const text = await response.text();
+
+    return {
+      /** Parse the response as JSON. For JSONEachRow, each line is a JSON object. */
+      json: () => {
+        if (!text.trim()) return [];
+        if (format === 'JSONEachRow') {
+          return text.trim().split('\n').map(line => JSON.parse(line));
+        }
+        // For other formats (e.g. JSON), parse the whole thing
+        return JSON.parse(text);
+      },
+    };
+  },
+};
 
 // Database path - stores in project root/data directory
 const dbPath = path.join(__dirname, '../../data');
