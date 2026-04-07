@@ -22,6 +22,9 @@ backend/data-submissions/
 # Uploaded files
 backend/uploads/
 
+#restart script
+restart-webapp.sh
+
 # Logs
 logs/
 *.log

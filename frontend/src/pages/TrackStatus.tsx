@@ -66,22 +66,34 @@ const TrackStatus = () => {
 
         // Determine role directly — don't rely on isSuperUser state (race condition)
         let isSuper = false;
+        let tokenIsValid = !!token;
         if (token) {
           const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
           try {
             const profileRes = await fetch(`${API_URL}/api/auth/profile`, {
               headers: { 'Authorization': `Bearer ${token}` }
             });
-            const profileData = await profileRes.json();
-            if (profileData.status === 'success') {
-              isSuper = profileData.data.user.role === 'super';
+            if (profileRes.status === 401) {
+              // Token is invalid or user not found — clear it and fall back to public
+              localStorage.removeItem('authToken');
+              tokenIsValid = false;
+              setIsLoggedIn(false);
+              logger.warn('Auth token invalid, falling back to public view');
+            } else {
+              const profileData = await profileRes.json();
+              if (profileData.status === 'success') {
+                isSuper = profileData.data.user.role === 'super';
+              }
             }
-          } catch { /* ignore */ }
+          } catch {
+            // Network error — keep token but fall back to public for this load
+            tokenIsValid = false;
+          }
         }
 
         // Super users see all; regular users merge own + public; guests get public only
         let allSubmissions: any[] = [];
-        if (!token) {
+        if (!tokenIsValid) {
           const res = await getPublicSubmissions();
           allSubmissions = res.data.submissions;
         } else if (isSuper) {
