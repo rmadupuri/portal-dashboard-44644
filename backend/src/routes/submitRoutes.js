@@ -22,6 +22,10 @@ import { authenticateToken, optionalAuth } from '../middleware/auth.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// File storage root — configurable via env var, defaults to <project>/data-submissions
+const DATA_SUBMISSIONS_DIR = process.env.DATA_SUBMISSIONS_DIR
+  || path.join(__dirname, '../../data-submissions');
+
 const router = express.Router();
 
 // ─── PMID / URL normalizer ────────────────────────────────────────────────────
@@ -111,7 +115,7 @@ const storage = multer.diskStorage({
       ? path.dirname(relativePath)
       : '';
 
-    const baseDir = path.join(__dirname, '../../data-submissions', submissionId);
+    const baseDir = path.join(DATA_SUBMISSIONS_DIR, submissionId);
     const uploadDir = subdir ? path.join(baseDir, subdir) : baseDir;
 
     try {
@@ -718,7 +722,7 @@ router.post('/:id/add-files',
       // Create dated subfolder: update_YYYY-MM-DD
       const dateStr = new Date().toISOString().slice(0, 10);
       const subfolderName = `update_${dateStr}`;
-      const subfolderPath = path.join(__dirname, '../../data-submissions', req.params.id, subfolderName);
+      const subfolderPath = path.join(DATA_SUBMISSIONS_DIR, req.params.id, subfolderName);
       await fs.mkdir(subfolderPath, { recursive: true });
 
       // Move uploaded files from multer temp location into the dated subfolder
@@ -841,7 +845,7 @@ router.delete('/:id',
       
       // Delete associated files
       if (submission.hasAttachments) {
-        const submissionDir = path.join(__dirname, '../../data-submissions', req.params.id);
+        const submissionDir = path.join(DATA_SUBMISSIONS_DIR, req.params.id);
         try {
           await fs.rm(submissionDir, { recursive: true, force: true });
           console.log(`🗑️  Deleted files for submission: ${req.params.id}`);
