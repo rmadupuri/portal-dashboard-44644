@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -47,6 +47,13 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
   maxBars = 20,
   barSize = 22
 }) => {
+  // Delay rendering until container is mounted to avoid Recharts layout race condition
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setReady(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
+
   const sortedData = data
     .map(item => ({
       ...item,
@@ -148,7 +155,7 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
   );
 
   if (variant === 'embedded') {
-    if (isLoading) {
+    if (isLoading || !ready) {
       return (
         <div className="flex items-center justify-center" style={{ height }}>
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -170,7 +177,7 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
   }
 
   // Full variant with Card wrapper (existing behavior)
-  if (isLoading) {
+  if (isLoading || !ready) {
     return (
       <Card className="bg-white shadow-lg">
         <CardHeader>

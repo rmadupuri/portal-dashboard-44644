@@ -18,6 +18,14 @@ import { submissionsDb } from '../db/index.js';
 import { createUser, findUserByEmail } from '../db/users.js';
 import { isSuperUserEmail } from '../config/superUsers.js';
 import { authenticateToken, optionalAuth } from '../middleware/auth.js';
+import { notifyNewSubmission, notifyFilesAdded, notifyNoteAdded } from '../utils/slack.js';
+import {
+  normalizeIdentifier,
+  getSubmissionIdentifiers,
+  findConflict,
+  findSimilarByTitle,
+  getSubmissionTitle,
+} from '../utils/duplicateDetection.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,79 +35,6 @@ const DATA_SUBMISSIONS_DIR = process.env.DATA_SUBMISSIONS_DIR
   || path.join(__dirname, '../../data-submissions');
 
 const router = express.Router();
-
-// ─── PMID / URL normalizer ────────────────────────────────────────────────────
-// Returns bare PubMed digits when possible, otherwise lowercased trimmed URL.
-// e.g. all of these → '12345678':
-//   '12345678', 'PMID: 12345678', 'pubmed.ncbi.nlm.nih.gov/12345678',
-//   'https://pubmed.ncbi.nlm.nih.gov/12345678/', 'https://www.ncbi.nlm.nih.gov/pubmed/12345678'
-function normalizePmid(raw) {
-  if (!raw || typeof raw !== 'string') return null;
-  const s = raw.trim();
-  if (!s) return null;
-
-  // Strip known PubMed URL patterns
-  const urlPatterns = [
-    /(?:https?:\/\/)?(?:www\.)?(?:pubmed\.ncbi\.nlm\.nih\.gov|ncbi\.nlm\.nih\.gov\/pubmed)[\/?]*(\d+)\/?/i,
-    /(?:https?:\/\/)?(?:www\.)?doi\.org\/(.+)/i,
-  ];
-  for (const re of urlPatterns) {
-    const m = s.match(re);
-    if (m) return m[1].toLowerCase().replace(/\/$/, '');
-  }
-
-  // Strip 'PMID:' prefix and whitespace
-  const pmidPrefix = s.replace(/^pmid[:\s]*/i, '').trim();
-  if (/^\d+$/.test(pmidPrefix)) return pmidPrefix;
-
-  // Fall back to lowercased, trailing-slash-stripped raw value
-  return s.toLowerCase().replace(/\/$/, '');
-}
-
-// Build the set of normalised identifiers for a submission to compare against
-function getSubmissionIdentifiers(sub) {
-  const ids = new Set();
-  // Only check published submissions — pre-publication ones rarely have PMIDs
-  if (sub.publicationType !== 'published') return ids;
-  for (const field of [sub.pmid, sub.associatedPaper, sub.linkToData]) {
-    const n = normalizePmid(field);
-    if (n) ids.add(n);
-  }
-  return ids;
-}
-
-// ─── Duplicate detection ──────────────────────────────────────────────────────
-// Scans all existing published submissions for PMID/URL overlap.
-// Returns null if no conflict, or an object describing the conflict.
-async function findConflict(newType, incomingIds) {
-  if (!incomingIds.size) return null;
-
-  let bestConflict = null; // data submission conflict takes priority over suggestion conflict
-
-  for await (const [key, sub] of submissionsDb.iterator()) {
-    if (sub.publicationType !== 'published') continue;
-
-    const existingIds = getSubmissionIdentifiers(sub);
-    const overlap = [...incomingIds].some(id => existingIds.has(id));
-    if (!overlap) continue;
-
-    const conflict = {
-      existingId: key,
-      existingType: sub.submissionType,
-      existingTitle: sub.paperTitle || sub.studyName || '',
-      existingStatus: sub.displayStatus || sub.status || '',
-    };
-
-    // Data submission conflicts always win — return immediately
-    if (sub.submissionType === 'submit-data') {
-      return conflict;
-    }
-    // Suggestion conflict — keep looking in case there's a data sub too
-    bestConflict = conflict;
-  }
-
-  return bestConflict;
-}
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -372,18 +307,21 @@ router.post('/',
         updatedAt: new Date().toISOString()
       };
       
-      // ─── Duplicate / conflict detection (published only, skip for super users) ───
-      const isSuperBypass = req.user.role === 'super';
+      // ─── Duplicate / conflict detection ────────────────────────────────────────
+      const skipDuplicateCheck = req.body.skipDuplicateCheck === 'true';
       const isPublished = formData.publicationType === 'published';
 
-      if (isPublished && !isSuperBypass) {
+      console.log(`🔍 Duplicate check: isPublished=${isPublished}, role=${req.user.role}, skipDuplicateCheck=${skipDuplicateCheck}`);
+
+      if (isPublished) {
         const incomingIds = new Set();
         for (const field of [formData.pmid, formData.associatedPaper, formData.linkToData]) {
-          const n = normalizePmid(field);
+          const n = normalizeIdentifier(field);
           if (n) incomingIds.add(n);
         }
 
-        const conflict = await findConflict(formData.actionType, incomingIds);
+        // Layer 1: Hard conflict — PMID / DOI / URL exact match
+        const conflict = await findConflict(submissionsDb, formData.actionType, incomingIds);
 
         if (conflict) {
           const newIsData = formData.actionType === 'submit-data';
@@ -432,10 +370,31 @@ router.post('/',
             }
           }
         }
+
+        // Layer 2: Soft warning — title similarity (skippable by user)
+        if (!skipDuplicateCheck) {
+          const incomingTitle = formData.paperTitle || formData.studyName || '';
+          const similar = await findSimilarByTitle(submissionsDb, incomingTitle);
+          if (similar) {
+            return res.status(409).json({
+              status: 'conflict',
+              conflictType: 'similar-title',
+              message: `A similar study may already exist (${similar.similarityScore}% match). You can still submit if this is a different study.`,
+              existingSubmissionId: similar.existingId,
+              existingSubmissionType: similar.existingType,
+              existingTitle: similar.existingTitle,
+              existingStatus: similar.existingStatus,
+              similarityScore: similar.similarityScore,
+            });
+          }
+        }
       }
 
       // Save to LevelDB
       await submissionsDb.put(submissionId, submission);
+      
+      // Notify Slack (fire-and-forget)
+      notifyNewSubmission(submission);
       
       console.log(`✅ Submission created: ${submissionId}`);
       console.log(`   Type: ${submission.submissionType}`);
@@ -753,6 +712,12 @@ router.post('/:id/add-files',
 
       console.log(`✅ ${uploadedFiles.length} file(s) added to submission ${req.params.id} in ${subfolderName}`);
 
+      // Notify Slack — only for non-super users (submitter actions)
+      if (req.user.role !== 'super') {
+        const title = submission.studyName || submission.paperTitle || '';
+        notifyFilesAdded(req.params.id, uploadedFiles.length, req.user.email, title);
+      }
+
       res.json({
         status: 'success',
         message: `${uploadedFiles.length} file(s) added successfully`,
@@ -808,6 +773,12 @@ router.patch('/:id/add-note',
       await submissionsDb.put(req.params.id, submission);
 
       console.log(`✅ Note added to submission ${req.params.id} by ${req.user.email}`);
+
+      // Notify Slack — only for non-super users (submitter actions)
+      if (req.user.role !== 'super') {
+        const title = submission.studyName || submission.paperTitle || '';
+        notifyNoteAdded(req.params.id, note.trim(), req.user.email, title);
+      }
 
       res.json({
         status: 'success',

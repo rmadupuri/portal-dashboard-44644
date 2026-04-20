@@ -42,9 +42,9 @@ const Analytics = () => {
   const [selectedYear, setSelectedYear] = useState<number>(2018);
   const [dataError, setDataError] = useState<boolean>(false);
 
-  useEffect(() => { setLastUpdated(formatLastUpdated()); }, []);
+  useEffect(() => { setLastUpdated(formatLastUpdated()); window.scrollTo(0, 0); }, []);
 
-  const { data: samplesByCancerType = [] } = useQuery({
+  const { data: samplesByCancerType = [], isLoading: cancerTypeSamplesLoading } = useQuery({
     queryKey: ['cancer-type-samples'],
     queryFn: () => fetchCancerTypeSamples(20),
   });
@@ -151,7 +151,7 @@ const Analytics = () => {
 
           {/* Samples by Cancer Type */}
           <div className="mb-8">
-            <SamplesByCancerTypeChart data={samplesByCancerType} isLoading={false} />
+            <SamplesByCancerTypeChart data={samplesByCancerType} isLoading={cancerTypeSamplesLoading} />
           </div>
 
           {/* Sample Counts by Data Type + Pipeline Funnel side by side */}

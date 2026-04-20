@@ -93,7 +93,9 @@ const SubmitContent = () => {
     existingSubmissionType: string;
     existingTitle: string;
     existingStatus: string;
+    similarityScore?: number;
   }>(null);
+  const [pendingSubmitData, setPendingSubmitData] = useState<{ data: FormValues; files: File[] } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Set default values immediately
   const [publicationType, setPublicationType] = useState<PublicationType>("published");
@@ -274,7 +276,12 @@ const SubmitContent = () => {
           existingSubmissionType: error.existingSubmissionType,
           existingTitle: error.existingTitle,
           existingStatus: error.existingStatus,
+          similarityScore: error.similarityScore,
         });
+        // Save pending data for "Submit Anyway" on soft warnings
+        if (error.conflictType === 'similar-title') {
+          setPendingSubmitData({ data, files: [...files] });
+        }
         // Scroll to top of form so the banner is visible
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
@@ -287,6 +294,39 @@ const SubmitContent = () => {
   };
 
   // Fields to reset when switching between form types (does NOT reset actionType)
+  const handleSubmitAnyway = async () => {
+    if (!pendingSubmitData) return;
+    setIsSubmitting(true);
+    setConflictError(null);
+    try {
+      const response = await submitContent(pendingSubmitData.data, pendingSubmitData.files, true);
+      console.log('✅ Submission successful (override):', response);
+      if (pendingSubmitData.data.actionType === 'suggest-paper') {
+        setSuccessMessage('Your study suggestion has been submitted successfully!');
+      } else {
+        setSuccessMessage('Your dataset has been submitted successfully!');
+      }
+      const tab = pendingSubmitData.data.actionType === 'suggest-paper'
+        ? '/track-status?tab=suggested-papers'
+        : '/track-status?tab=submitted-data';
+      setRedirectTab(tab);
+      setSubmittedActionType(pendingSubmitData.data.actionType);
+      form.reset();
+      setFiles([]);
+      setFileInputKey(k => k + 1);
+      setFolderInputKey(k => k + 1);
+      setUploadMode(null);
+      setPublicationType('published');
+      setActionType('suggest-paper');
+      setPendingSubmitData(null);
+      setShowSuccessModal(true);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to submit');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const resetDataFields = () => {
     form.setValue("isDataTransformed", null);
     form.setValue("studyName", "");
@@ -404,8 +444,10 @@ const SubmitContent = () => {
           {/* Conflict / duplicate banner */}
           {conflictError && (() => {
             const isDataConflict = conflictError.conflictType === 'data-submission-exists';
-            const shortId = conflictError.existingSubmissionId?.replace(/^submission_/, '').slice(0, 8);
+            const isSimilarTitle = conflictError.conflictType === 'similar-title';
+            const shortId = conflictError.existingSubmissionId?.replace(/^submission_/, '').replace(/^github_/, '').slice(0, 8);
             const trackerTab = conflictError.existingSubmissionType === 'submit-data' ? 'submitted-data' : 'suggested-papers';
+            const bannerColor = isDataConflict ? 'red' : 'amber';
             return (
               <div className={`mb-6 rounded-xl border p-5 flex items-start gap-4 ${
                 isDataConflict
@@ -421,14 +463,15 @@ const SubmitContent = () => {
                   }`}>
                     {isDataConflict
                       ? 'A data submission for this study already exists'
-                      : 'This study has already been suggested'}
+                      : isSimilarTitle
+                        ? 'A similar study may already exist'
+                        : 'This study has already been suggested'}
                   </p>
                   <p className={`text-sm mt-1 ${
                     isDataConflict ? 'text-red-700' : 'text-amber-700'
                   }`}>
-                    {conflictError.message}
                     {conflictError.existingTitle && (
-                      <span className="block mt-0.5 font-medium">{conflictError.existingTitle}</span>
+                      <span className="block font-medium">{conflictError.existingTitle}</span>
                     )}
                     {conflictError.existingStatus && (
                       <span className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -438,7 +481,7 @@ const SubmitContent = () => {
                   </p>
                   <div className="flex items-center gap-3 mt-3">
                     <a
-                      href={`/track-status?tab=${trackerTab}`}
+                      href={`/track-status?tab=${trackerTab}&highlight=${shortId}`}
                       className={`text-sm font-medium underline ${
                         isDataConflict ? 'text-red-700 hover:text-red-900' : 'text-amber-700 hover:text-amber-900'
                       }`}
@@ -446,9 +489,19 @@ const SubmitContent = () => {
                       View in tracker →
                       {shortId && <span className="ml-1 font-mono text-xs opacity-70">#{shortId}</span>}
                     </a>
+                    {isSimilarTitle && (
+                      <button
+                        type="button"
+                        onClick={handleSubmitAnyway}
+                        disabled={isSubmitting}
+                        className="text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded-md transition-colors disabled:bg-gray-400"
+                      >
+                        {isSubmitting ? 'Submitting...' : 'Submit Anyway'}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setConflictError(null)}
+                      onClick={() => { setConflictError(null); setPendingSubmitData(null); }}
                       className="text-xs text-gray-500 hover:text-gray-700 underline"
                     >
                       Dismiss

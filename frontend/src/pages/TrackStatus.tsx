@@ -20,6 +20,7 @@ const TrackStatus = () => {
   
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
+  const highlightParam = searchParams.get("highlight");
   const [activeTab, setActiveTab] = useState<'suggested-papers' | 'submitted-data' | 'my-submissions'>("suggested-papers");
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [userEmail, setUserEmail] = useState<string>('');
@@ -198,6 +199,13 @@ const TrackStatus = () => {
       setActiveTab(tabParam as 'suggested-papers' | 'submitted-data' | 'my-submissions');
     }
   }, [tabParam]);
+
+  // Handle highlight parameter — auto-search for the submission ID
+  useEffect(() => {
+    if (highlightParam) {
+      setSearchQuery(highlightParam);
+    }
+  }, [highlightParam]);
 
   // Separate submissions by type and publication status
   const { publishedPapers, preprintPapers } = useMemo(() => {

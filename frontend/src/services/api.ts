@@ -43,7 +43,7 @@ const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
  * Submit content form data to backend
  * New unified endpoint that handles all submission types
  */
-export const submitContent = async (formData: any, files?: File[]) => {
+export const submitContent = async (formData: any, files?: File[], skipDuplicateCheck?: boolean) => {
   const token = localStorage.getItem('authToken');
   
   if (!token) {
@@ -52,6 +52,9 @@ export const submitContent = async (formData: any, files?: File[]) => {
   
   const data = new FormData();
   data.append('data', JSON.stringify(formData));
+  if (skipDuplicateCheck) {
+    data.append('skipDuplicateCheck', 'true');
+  }
   
   // Append files if provided
   // Use webkitRelativePath as the filename when available so subfolder
@@ -81,6 +84,7 @@ export const submitContent = async (formData: any, files?: File[]) => {
     err.existingSubmissionType = conflictData.existingSubmissionType;
     err.existingTitle = conflictData.existingTitle;
     err.existingStatus = conflictData.existingStatus;
+    err.similarityScore = conflictData.similarityScore;
     throw err;
   }
   
