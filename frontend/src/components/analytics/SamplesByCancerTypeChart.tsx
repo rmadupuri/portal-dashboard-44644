@@ -103,6 +103,7 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
         <YAxis
           type="category"
           dataKey="name"
+          interval={0}
           axisLine={{ stroke: '#ccc' }}
           tickLine={false}
           width={160}
