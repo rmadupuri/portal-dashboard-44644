@@ -19,10 +19,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ─── Lightweight ClickHouse HTTP client ────────────────────────────────────
-const CH_URL = process.env.CLICKHOUSE_HOST || 'https://dl96orhu96.us-east-1.aws.clickhouse.cloud';
+const CH_HOST = process.env.CLICKHOUSE_HOST || 'https://dl96orhu96.us-east-1.aws.clickhouse.cloud';
+const CH_PORT = process.env.CLICKHOUSE_PORT || '';
 const CH_USER = process.env.CLICKHOUSE_USERNAME || 'default';
 const CH_PASS = process.env.CLICKHOUSE_PASSWORD || '';
 const CH_DB = process.env.CLICKHOUSE_DATABASE || 'cgds_public_blue';
+
+// Build base URL including port if specified
+const _chBase = new URL(CH_HOST);
+if (CH_PORT) _chBase.port = CH_PORT;
+const CH_URL = _chBase.toString();
 
 /**
  * Minimal ClickHouse client that matches the subset of the official API

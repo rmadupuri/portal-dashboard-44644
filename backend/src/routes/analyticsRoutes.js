@@ -10,6 +10,7 @@ import fetch from 'node-fetch';
 import { clickhouseClient, submissionsDb } from '../db/index.js';
 
 const router = express.Router();
+const CH_DB = process.env.CLICKHOUSE_DATABASE || 'cbioportal_public_blue';
 
 // Year extraction SQL expression — exactly mirrors frontend extractYearFromStudy():
 // 1. Parse year from citation
@@ -47,9 +48,9 @@ router.get('/cancer-type-samples', async (req, res) => {
           csamp.attr_value                    AS name,
           COUNT(DISTINCT csamp.internal_id)   AS samples,
           COUNT(DISTINCT p.cancer_study_id)   AS studies
-        FROM cgds_public_blue.clinical_sample csamp
-        JOIN cgds_public_blue.sample s ON csamp.internal_id = s.internal_id
-        JOIN cgds_public_blue.patient p ON s.patient_id = p.internal_id
+        FROM ${CH_DB}.clinical_sample csamp
+        JOIN ${CH_DB}.sample s ON csamp.internal_id = s.internal_id
+        JOIN ${CH_DB}.patient p ON s.patient_id = p.internal_id
         WHERE csamp.attr_id = 'CANCER_TYPE'
         GROUP BY csamp.attr_value
         ORDER BY samples DESC
@@ -82,7 +83,7 @@ router.get('/study-sample-counts', async (req, res) => {
     const result = await clickhouseClient.query({
       query: `
         SELECT cancer_study_identifier AS studyId, count(*) AS sampleCount
-        FROM cgds_public_blue.sample_derived
+        FROM ${CH_DB}.sample_derived
         GROUP BY cancer_study_identifier
       `,
       format: 'JSONEachRow',
@@ -109,10 +110,10 @@ router.get('/cumulative-growth', async (req, res) => {
             ${YEAR_EXPR} AS year,
             count(DISTINCT cs.cancer_study_identifier) AS studies,
             sum(sample_counts.cnt) AS samples
-        FROM cgds_public_blue.cancer_study cs
+        FROM ${CH_DB}.cancer_study cs
         LEFT JOIN (
             SELECT cancer_study_identifier, count(*) AS cnt
-            FROM cgds_public_blue.sample_derived
+            FROM ${CH_DB}.sample_derived
             GROUP BY cancer_study_identifier
         ) AS sample_counts ON cs.cancer_study_identifier = sample_counts.cancer_study_identifier
         WHERE year >= 2011
@@ -166,9 +167,9 @@ router.get('/sample-counts-by-datatype', async (req, res) => {
                   length(arrayDistinct(arrayFlatten(groupArray(
                       splitByChar(',', assumeNotNull(gps.ordered_sample_list))
                   )))) AS distinct_samples
-              FROM cgds_public_blue.genetic_profile gp
-              JOIN cgds_public_blue.cancer_study cs ON gp.cancer_study_id = cs.cancer_study_id
-              JOIN cgds_public_blue.genetic_profile_samples gps ON gp.genetic_profile_id = gps.genetic_profile_id
+              FROM ${CH_DB}.genetic_profile gp
+              JOIN ${CH_DB}.cancer_study cs ON gp.cancer_study_id = cs.cancer_study_id
+              JOIN ${CH_DB}.genetic_profile_samples gps ON gp.genetic_profile_id = gps.genetic_profile_id
               WHERE ${YEAR_EXPR} = ${year}
                 AND gp.genetic_alteration_type != 'MUTATION_EXTENDED'
               GROUP BY gp.cancer_study_id, gp.genetic_alteration_type, gp.datatype, gp.generic_assay_type
@@ -182,9 +183,9 @@ router.get('/sample-counts-by-datatype', async (req, res) => {
       clickhouseClient.query({
         query: `
           SELECT count(DISTINCT m.sample_id) AS samples
-          FROM cgds_public_blue.mutation m
-          JOIN cgds_public_blue.genetic_profile gp ON m.genetic_profile_id = gp.genetic_profile_id
-          JOIN cgds_public_blue.cancer_study cs ON gp.cancer_study_id = cs.cancer_study_id
+          FROM ${CH_DB}.mutation m
+          JOIN ${CH_DB}.genetic_profile gp ON m.genetic_profile_id = gp.genetic_profile_id
+          JOIN ${CH_DB}.cancer_study cs ON gp.cancer_study_id = cs.cancer_study_id
           WHERE ${YEAR_EXPR} = ${year}
             AND gp.genetic_alteration_type = 'MUTATION_EXTENDED'
         `,
