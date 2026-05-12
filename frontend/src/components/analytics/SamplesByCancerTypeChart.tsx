@@ -47,12 +47,14 @@ const SamplesByCancerTypeChart: React.FC<SamplesByCancerTypeChartProps> = ({
   maxBars = 20,
   barSize = 22
 }) => {
-  // Delay rendering until container is mounted to avoid Recharts layout race condition
+  // Delay rendering until container is mounted to avoid Recharts layout race condition.
+  // Reset on data change so the delay always fires after data arrives, not just on mount.
   const [ready, setReady] = useState(false);
   useEffect(() => {
+    setReady(false);
     const timer = setTimeout(() => setReady(true), 100);
     return () => clearTimeout(timer);
-  }, []);
+  }, [data]);
 
   const sortedData = data
     .map(item => ({
