@@ -6,15 +6,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import session from 'express-session';
-import passport, { configurePassport } from './config/passport.js';
 import { initializeDatabases, closeDatabases } from './db/index.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import submitRoutes from './routes/submitRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
-
-configurePassport();
 
 const app = express();
 
@@ -29,14 +25,6 @@ app.use(cors({
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'dev-secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === 'production' },
-}));
-app.use(passport.initialize());
-app.use(passport.session());
 // Rate limiter — higher limit in development, stricter in production
 // Public read-only endpoints are exempt (see below)
 const limiter = rateLimit({

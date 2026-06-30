@@ -435,13 +435,13 @@ const sourceCol: ColumnDef = {
   ...baseColumn
 };
 
-// Study Suggestions: Submission ID, Status, PMID/URL, Submitted By, Email, Title, Submission Date
-export const usePaperColumnDefs = (): ColumnDef[] => [
+// Study Suggestions: Submission ID, Status, PMID/URL, [Submitted By, Email — super users only], Title, Submission Date
+export const usePaperColumnDefs = (isSuperUser: boolean = false): ColumnDef[] => [
   idCol,
   statusCol,
   pmidCol,
-  nameCol,
-  emailCol,
+  // Submitter name + email are only exposed to super users
+  ...(isSuperUser ? [nameCol, emailCol] : []),
   {
     field: 'title',
     headerName: 'Title',
@@ -454,13 +454,13 @@ export const usePaperColumnDefs = (): ColumnDef[] => [
   dateCol
 ];
 
-// Data Submissions: Submission ID, Status, PMID/URL, Submitted By, Email, Study Name, Description, Submission Date
-export const useDataColumnDefs = (): ColumnDef[] => [
+// Data Submissions: Submission ID, Status, PMID/URL, [Submitted By, Email — super users only], Study Name, Description, Submission Date
+export const useDataColumnDefs = (isSuperUser: boolean = false): ColumnDef[] => [
   idCol,
   statusCol,
   pmidCol,
-  nameCol,
-  emailCol,
+  // Submitter name + email are only exposed to super users
+  ...(isSuperUser ? [nameCol, emailCol] : []),
   {
     field: 'studyName',
     headerName: 'Study Name',
@@ -484,13 +484,13 @@ export const useDataColumnDefs = (): ColumnDef[] => [
 ];
 
 // My Submissions: unified table with Source column, shared title field
-export const useMySubmissionsColumnDefs = (): ColumnDef[] => [
+export const useMySubmissionsColumnDefs = (isSuperUser: boolean = false): ColumnDef[] => [
   idCol,
   sourceCol,
   statusCol,
   pmidCol,
-  nameCol,
-  emailCol,
+  // Submitter name + email are only exposed to super users
+  ...(isSuperUser ? [nameCol, emailCol] : []),
   {
     field: 'title',
     headerName: 'Title / Study Name',

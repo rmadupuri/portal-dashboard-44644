@@ -103,8 +103,16 @@ export const fetchSubmissionVolume = async () => {
   return (await r.json()).data;
 };
 
-export const fetchAvgTimePerStage = async () => {
-  const r = await fetch(`${BACKEND_URL()}/api/analytics/submissions/avg-time-per-stage`);
-  if (!r.ok) throw new Error('Failed to fetch avg time per stage');
+export interface SubmissionMix {
+  total: number;
+  byType: Array<{ name: string; count: number }>;
+  byPublication: Array<{ name: string; count: number }>;
+  bySharing: Array<{ name: string; count: number }>;
+}
+
+export const fetchSubmissionMix = async (): Promise<SubmissionMix> => {
+  const r = await fetch(`${BACKEND_URL()}/api/analytics/submissions/mix`);
+  if (!r.ok) throw new Error('Failed to fetch submission mix');
   return (await r.json()).data;
 };
+

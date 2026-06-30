@@ -37,7 +37,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { FileText, Upload, Info, ArrowRight, ExternalLink, CheckCircle, LogIn, Clock, Search, Database, FlaskConical, X, AlertTriangle } from "lucide-react";
+import { FileText, Info, ArrowRight, ExternalLink, CheckCircle, LogIn, Clock, Search, Database, FlaskConical, AlertTriangle, ChevronDown } from "lucide-react";
 import { submitContent } from "@/services/api";
 import { Submission } from "@/types/submission";
 
@@ -71,8 +71,96 @@ type DataFormValues = CommonFormValues & {
   description: string;
   associatedPaper: string;
   linkToData: string;
+  accessGranted: boolean;
   isDataTransformed: boolean | null;
   referenceGenome: string;
+};
+
+// Curation team account that submitters must grant data access to.
+const CURATION_EMAIL = "cdsicuration@mskcc.org";
+
+/**
+ * Data-sharing block: instructions for sharing data via an external link
+ * (Google Drive / Dropbox / Box) with view access granted to the curation team,
+ * a link input, and a confirmation checkbox.
+ */
+const DataSharingFields = ({
+  control,
+  required,
+  linkLabel,
+}: {
+  control: any;
+  required: boolean;
+  linkLabel: string;
+}) => {
+  const [showHowTo, setShowHowTo] = useState(false);
+
+  return (
+    <>
+      {/* Link to data */}
+      <FormField
+        control={control}
+        name="linkToData"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-gray-700">
+              {linkLabel} {required && <span className="text-red-500">*</span>}{" "}
+              <button
+                type="button"
+                onClick={() => setShowHowTo((v) => !v)}
+                className="text-blue-600 hover:text-blue-800 inline-flex items-center font-normal"
+                aria-expanded={showHowTo}
+              >
+                How do I share?
+                <ChevronDown className={`ml-1 h-3 w-3 transition-transform ${showHowTo ? "rotate-180" : ""}`} />
+              </button>
+            </FormLabel>
+            {showHowTo && (
+              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <li>Upload your data to Google Drive, Dropbox, Box, or a similar service.</li>
+                <li>
+                  Grant <span className="font-medium">view access</span> to{" "}
+                  <span className="font-semibold text-blue-700">{CURATION_EMAIL}</span>.
+                </li>
+                <li>Paste the shareable link below.</li>
+              </ol>
+            )}
+            <FormControl>
+              <Input
+                placeholder="Paste your data link (e.g., Google Drive, Dropbox, Box)"
+                className="shadow-sm"
+                {...field}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      {/* Access-granted confirmation */}
+      <FormField
+        control={control}
+        name="accessGranted"
+        render={({ field }) => (
+          <FormItem>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="access-granted"
+                checked={field.value === true}
+                onCheckedChange={(v) => field.onChange(v === true)}
+              />
+              <Label htmlFor="access-granted" className="text-gray-600 cursor-pointer text-sm font-normal leading-tight">
+                I have granted data access to{" "}
+                <span className="font-semibold text-blue-700">{CURATION_EMAIL}</span>
+                {required && <span className="text-red-500"> *</span>}
+              </Label>
+            </div>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </>
+  );
 };
 
 type FormValues = PaperFormValues & DataFormValues & {
@@ -83,9 +171,6 @@ type FormValues = PaperFormValues & DataFormValues & {
 };
 
 const SubmitContent = () => {
-  const [files, setFiles] = useState<File[]>([]);
-  const [fileInputKey, setFileInputKey] = useState(0);
-  const [folderInputKey, setFolderInputKey] = useState(0);
   const [conflictError, setConflictError] = useState<null | {
     conflictType: string;
     message: string;
@@ -95,7 +180,7 @@ const SubmitContent = () => {
     existingStatus: string;
     similarityScore?: number;
   }>(null);
-  const [pendingSubmitData, setPendingSubmitData] = useState<{ data: FormValues; files: File[] } | null>(null);
+  const [pendingSubmitData, setPendingSubmitData] = useState<{ data: FormValues } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Set default values immediately
   const [publicationType, setPublicationType] = useState<PublicationType>("published");
@@ -153,6 +238,7 @@ const SubmitContent = () => {
       description: "",
       associatedPaper: "",
       linkToData: "",
+      accessGranted: false,
       isDataTransformed: null,
       referenceGenome: "",
       notes: "",
@@ -165,38 +251,12 @@ const SubmitContent = () => {
   const canContactEmail = form.watch("canContactEmail");
   const isDataTransformed = form.watch("isDataTransformed");
   const linkToData = form.watch("linkToData");
+  const accessGranted = form.watch("accessGranted");
   const dataTypes = form.watch("dataTypes");
   const isOtherSelected = dataTypes?.includes("Other (please specify)");
   const isLeadAuthor = form.watch("isLeadAuthor");
   const wantsToHelpCurate = form.watch("wantsToHelpCurate");
   const sharingPreference = form.watch("sharingPreference");
-  
-  const [uploadMode, setUploadMode] = useState<'files' | 'folder' | null>(null);
-
-  // Select Files: accumulate one or more files across multiple clicks.
-  // Switching from folder mode clears everything first.
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const incoming = Array.from(e.target.files);
-      setFiles(prev => {
-        const base = uploadMode === 'folder' ? [] : prev; // clear if switching from folder
-        const existing = new Set(base.map(f => `${f.name}-${f.size}`));
-        const deduped = incoming.filter(f => !existing.has(`${f.name}-${f.size}`));
-        return [...base, ...deduped];
-      });
-      setUploadMode('files');
-      setFileInputKey(k => k + 1); // remount so next click always opens fresh dialog
-    }
-  };
-
-  // Select Folder: always replaces everything with the new folder's files.
-  const handleFolderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFiles(Array.from(e.target.files)); // full replace
-      setUploadMode('folder');
-      setFolderInputKey(k => k + 1);
-    }
-  };
 
   const handleDataTypeChange = (dataType: string, checked: boolean) => {
     const currentDataTypes = form.getValues("dataTypes") || [];
@@ -227,18 +287,29 @@ const SubmitContent = () => {
       return;
     }
 
-    // Validate that data submission has either files or a link
-    const needsDataOrLink = data.actionType === "submit-data" || publicationType === "preprint";
-    if (needsDataOrLink && files.length === 0 && !data.linkToData?.trim()) {
-      toast.error("Please upload files or provide a link to your data.");
+    // Data submissions (and all preprints) must share a data link and confirm
+    // that the curation team has been granted access to it.
+    const needsDataLink = data.actionType === "submit-data" || publicationType === "preprint";
+    if (needsDataLink) {
+      if (!data.linkToData?.trim()) {
+        toast.error("Please provide a link to your data (Google Drive, Dropbox, Box, etc.).");
+        return;
+      }
+      if (!data.accessGranted) {
+        toast.error(`Please confirm you have granted data access to ${CURATION_EMAIL}.`);
+        return;
+      }
+    } else if (data.linkToData?.trim() && !data.accessGranted) {
+      // Paper suggestions: a link is optional, but if one is given, access must be confirmed.
+      toast.error(`Please confirm you have granted data access to ${CURATION_EMAIL}.`);
       return;
     }
-    
+
     setIsSubmitting(true);
-    
+
     try {
       // 🔥 ACTUAL API CALL - This is what was missing!
-      const response = await submitContent(data, files);
+      const response = await submitContent(data);
       console.log('✅ Submission successful:', response);
       
       // Set success message based on action type
@@ -257,10 +328,6 @@ const SubmitContent = () => {
 
       // Reset form
       form.reset();
-      setFiles([]);
-      setFileInputKey(k => k + 1);
-      setFolderInputKey(k => k + 1);
-      setUploadMode(null);
       setPublicationType("published");
       setActionType("suggest-paper");
 
@@ -280,7 +347,7 @@ const SubmitContent = () => {
         });
         // Save pending data for "Submit Anyway" on soft warnings
         if (error.conflictType === 'similar-title') {
-          setPendingSubmitData({ data, files: [...files] });
+          setPendingSubmitData({ data });
         }
         // Scroll to top of form so the banner is visible
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -299,7 +366,7 @@ const SubmitContent = () => {
     setIsSubmitting(true);
     setConflictError(null);
     try {
-      const response = await submitContent(pendingSubmitData.data, pendingSubmitData.files, true);
+      const response = await submitContent(pendingSubmitData.data, true);
       console.log('✅ Submission successful (override):', response);
       if (pendingSubmitData.data.actionType === 'suggest-paper') {
         setSuccessMessage('Your study suggestion has been submitted successfully!');
@@ -312,10 +379,6 @@ const SubmitContent = () => {
       setRedirectTab(tab);
       setSubmittedActionType(pendingSubmitData.data.actionType);
       form.reset();
-      setFiles([]);
-      setFileInputKey(k => k + 1);
-      setFolderInputKey(k => k + 1);
-      setUploadMode(null);
       setPublicationType('published');
       setActionType('suggest-paper');
       setPendingSubmitData(null);
@@ -347,8 +410,8 @@ const SubmitContent = () => {
     form.setValue("authors", "");
     form.setValue("publicationYear", "");
     form.setValue("privateAccessEmails", "");
-    setFiles([]);
-    setUploadMode(null);
+    form.setValue("linkToData", "");
+    form.setValue("accessGranted", false);
   };
 
   // Update the publication type when radio selection changes
@@ -820,80 +883,13 @@ const SubmitContent = () => {
                           )}
                         </div>
 
-                        {/* File Upload Section for Paper Form */}
-                        <div>
-                          <div className="flex items-center mb-2">
-                            <FormLabel className="text-gray-700">
-                              Upload any supporting data files
-                            </FormLabel>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-4 h-4 text-gray-500 ml-2 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm italic">
-                                    Attach any supplementary files, data samples, or links that may help the curation team assess the study.
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-6">
-                            <div className="flex flex-col items-center justify-center text-center">
-                              <Upload className="w-8 h-8 mb-2 text-gray-400" />
-                              <div className="flex gap-2 flex-wrap justify-center">
-                                <input
-                                  key={`file-paper-${fileInputKey}`}
-                                  id="file-upload-paper"
-                                  type="file"
-                                  className="sr-only"
-                                  multiple
-                                  onChange={handleFileChange}
-                                />
-                                <label
-                                  htmlFor="file-upload-paper"
-                                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-blue-600 bg-white border border-blue-600 rounded-md cursor-pointer hover:bg-blue-50"
-                                >
-                                  Select Files
-                                </label>
-                                <input
-                                  key={`folder-paper-${folderInputKey}`}
-                                  id="folder-upload-paper"
-                                  type="file"
-                                  className="sr-only"
-                                  multiple
-                                  // @ts-ignore
-                                  webkitdirectory=""
-                                  onChange={handleFolderChange}
-                                />
-                                <label
-                                  htmlFor="folder-upload-paper"
-                                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-blue-600 bg-white border border-blue-600 rounded-md cursor-pointer hover:bg-blue-50"
-                                >
-                                  Select Folder
-                                </label>
-                              </div>
-                              <p className="text-xs text-gray-400 mt-2">All file types accepted · .zip, .tar, .gz supported · Max 200MB per file</p>
-                            </div>
-                            {files.length > 0 && (
-                              <div className="mt-4 pt-4 border-t border-gray-200 space-y-1.5">
-                                {files.map((file, index) => (
-                                  <div key={index} className="flex items-center gap-2 py-0.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => setFiles(prev => prev.filter((_, i) => i !== index))}
-                                      className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 shrink-0"
-                                      title="Remove file"
-                                    ><X className="h-3.5 w-3.5" /></button>
-                                    <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-                                    <span className="text-sm text-gray-700 truncate">{file.name}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                        {/* Optional supporting-data link for Paper Form */}
+                        <DataSharingFields
+                          key="paper"
+                          control={form.control}
+                          required={false}
+                          linkLabel="Link to supporting data (optional)"
+                        />
 
                         {/* Researcher question */}
                         <FormField
@@ -1215,115 +1211,20 @@ const SubmitContent = () => {
                           )}
                         />
                         
-                        {/* Combined Upload Files or Link to Data Section */}
-                        <div>
-                          <div className="flex items-center mb-2">
-                            <FormLabel className="text-gray-700">
-                              Provide Data Files or Link <span className="text-red-500">*</span>
-                            </FormLabel>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-4 h-4 text-gray-500 ml-2 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm italic">
-                                    Either upload your data files or provide a link to external storage where your data is hosted.
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          
-                          {/* File Upload Section */}
-                          <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-6 mb-4">
-                            <div className="flex flex-col items-center justify-center text-center">
-                              <Upload className="w-8 h-8 mb-2 text-gray-400" />
-                              <p className="mb-2 text-sm text-gray-600">Upload data files or a folder</p>
-                              <div className="flex gap-2 flex-wrap justify-center">
-                                <input
-                                  key={`file-data-${fileInputKey}`}
-                                  id="file-upload-data"
-                                  type="file"
-                                  className="sr-only"
-                                  multiple
-                                  onChange={handleFileChange}
-                                />
-                                <label
-                                  htmlFor="file-upload-data"
-                                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-blue-600 bg-white border border-blue-600 rounded-md cursor-pointer hover:bg-blue-50"
-                                >
-                                  Select Files
-                                </label>
-                                <input
-                                  key={`folder-data-${folderInputKey}`}
-                                  id="folder-upload-data"
-                                  type="file"
-                                  className="sr-only"
-                                  multiple
-                                  // @ts-ignore
-                                  webkitdirectory=""
-                                  onChange={handleFolderChange}
-                                />
-                                <label
-                                  htmlFor="folder-upload-data"
-                                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-blue-600 bg-white border border-blue-600 rounded-md cursor-pointer hover:bg-blue-50"
-                                >
-                                  Select Folder
-                                </label>
-                              </div>
-                              <p className="text-xs text-gray-400 mt-2">All file types accepted · .zip, .tar, .gz supported · Max 200MB per file</p>
-                            </div>
-                            {files.length > 0 && (
-                              <div className="mt-4 pt-4 border-t border-gray-200 space-y-1.5">
-                                {files.map((file, index) => (
-                                  <div key={index} className="flex items-center gap-2 py-0.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => setFiles(prev => prev.filter((_, i) => i !== index))}
-                                      className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 shrink-0"
-                                      title="Remove file"
-                                    ><X className="h-3.5 w-3.5" /></button>
-                                    <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-                                    <span className="text-sm text-gray-700 truncate">{file.name}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
+                        {/* Data sharing via external link (required) */}
+                        <DataSharingFields
+                          key={`data-${actionType}-${publicationType}`}
+                          control={form.control}
+                          required={true}
+                          linkLabel="Link to your data"
+                        />
 
-                          {/* Inline error if neither file nor link provided */}
-                          {files.length === 0 && !linkToData?.trim() && (actionType === "submit-data" || publicationType === "preprint") && (
-                            <p className="text-xs text-amber-600 mb-2 flex items-center gap-1">
-                              <Info className="h-3 w-3" /> Please upload files or provide a link below.
-                            </p>
-                          )}
-
-                          {/* Or divider */}
-                          <div className="flex items-center mb-4">
-                            <div className="flex-1 border-t border-gray-300"></div>
-                            <span className="px-3 text-sm text-gray-500 bg-white">OR</span>
-                            <div className="flex-1 border-t border-gray-300"></div>
-                          </div>
-
-                          {/* Link to Data */}
-                          <FormField
-                            control={form.control}
-                            name="linkToData"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormControl>
-                                  <Input
-                                    placeholder="Provide link to external data storage (e.g., Google Drive, Dropbox, etc.)"
-                                    className="shadow-sm"
-                                    {...field}
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
+                        {/* Inline reminder if link or access confirmation is missing */}
+                        {(!linkToData?.trim() || !accessGranted) && (actionType === "submit-data" || publicationType === "preprint") && (
+                          <p className="text-xs text-amber-600 flex items-center gap-1">
+                            <Info className="h-3 w-3" /> A data link and confirmation that you've granted access to {CURATION_EMAIL} are required.
+                          </p>
+                        )}
 
                         {/* Researcher question for data form */}
                         <FormField

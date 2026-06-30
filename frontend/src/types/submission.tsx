@@ -21,8 +21,6 @@ export interface Submission {
   paper?: string;
   journal?: string;
   notes?: string;
-  attachedFiles?: string;
-  filePath?: string;
   studyName?: string;
   studyDescription?: string;
   curatedDataLink?: string;

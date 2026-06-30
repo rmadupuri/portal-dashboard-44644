@@ -7,7 +7,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
-import AuthCallback from "./pages/AuthCallback";
 import SubmitContent from "./pages/SubmitContent";
 import TrackStatus from "./pages/TrackStatus";
 import Analytics from "./pages/Analytics";
@@ -24,8 +23,7 @@ const App: React.FC = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-          
+
           {/* Protected Route - Requires Login */}
           <Route 
             path="/submit" 

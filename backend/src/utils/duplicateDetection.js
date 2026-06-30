@@ -102,12 +102,13 @@ export function getSubmissionTitle(sub) {
 const SIMILARITY_THRESHOLD = 0.55;
 
 // ─── Hard conflict detection (PMID / DOI / URL) ──────────────────────────────
-export async function findConflict(submissionsDb, newType, incomingIds) {
+// `submissions` is an array of submission documents (each carrying its `id`).
+export function findConflict(submissions, newType, incomingIds) {
   if (!incomingIds.size) return null;
 
   let bestConflict = null;
 
-  for await (const [key, sub] of submissionsDb.iterator()) {
+  for (const sub of submissions) {
     if (sub.publicationType !== 'published') continue;
 
     const existingIds = getSubmissionIdentifiers(sub);
@@ -115,7 +116,7 @@ export async function findConflict(submissionsDb, newType, incomingIds) {
     if (!overlap) continue;
 
     const conflict = {
-      existingId: key,
+      existingId: sub.id,
       existingType: sub.submissionType,
       existingTitle: getSubmissionTitle(sub),
       existingStatus: sub.displayStatus || sub.status || '',
@@ -130,13 +131,13 @@ export async function findConflict(submissionsDb, newType, incomingIds) {
 
 // ─── Soft duplicate detection (title similarity) ─────────────────────────────
 // Scans all submissions and returns the best title match above threshold.
-export async function findSimilarByTitle(submissionsDb, incomingTitle) {
+export function findSimilarByTitle(submissions, incomingTitle) {
   if (!incomingTitle || incomingTitle.trim().length < 5) return null;
 
   let bestMatch = null;
   let bestScore = 0;
 
-  for await (const [key, sub] of submissionsDb.iterator()) {
+  for (const sub of submissions) {
     const existingTitle = getSubmissionTitle(sub);
     if (!existingTitle) continue;
 
@@ -144,7 +145,7 @@ export async function findSimilarByTitle(submissionsDb, incomingTitle) {
     if (score > bestScore && score >= SIMILARITY_THRESHOLD) {
       bestScore = score;
       bestMatch = {
-        existingId: key,
+        existingId: sub.id,
         existingType: sub.submissionType,
         existingTitle,
         existingStatus: sub.displayStatus || sub.status || '',

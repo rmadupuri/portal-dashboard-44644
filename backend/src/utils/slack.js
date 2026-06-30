@@ -63,7 +63,6 @@ export function notifyNewSubmission(submission) {
   if (submission.pmid) lines.push(`*PMID:* ${submission.pmid}`);
   if (submission.associatedPaper) lines.push(`*Paper:* ${submission.associatedPaper}`);
   if (submission.publicationType) lines.push(`*Publication:* ${submission.publicationType}`);
-  if (submission.attachmentCount > 0) lines.push(`*Files:* ${submission.attachmentCount} attached`);
   if (submission.dataTypes && submission.dataTypes.length > 0) {
     lines.push(`*Data types:* ${submission.dataTypes.join(', ')}`);
   }
@@ -73,21 +72,6 @@ export function notifyNewSubmission(submission) {
       : submission.notes;
     lines.push(`*Notes:* ${truncated}`);
   }
-
-  return sendSlackNotification(lines.join('\n'));
-}
-
-/**
- * Notify: submitter added files to an existing submission
- */
-export function notifyFilesAdded(submissionId, fileCount, submitterEmail, submissionTitle) {
-  const lines = [
-    `📎 *Files Added to Submission*`,
-    `*ID:* ${shortId(submissionId)}`,
-    `*Submission:* ${submissionTitle || submissionId}`,
-    `*Files added:* ${fileCount}`,
-    `*By:* ${submitterEmail}`,
-  ];
 
   return sendSlackNotification(lines.join('\n'));
 }

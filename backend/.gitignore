@@ -33,3 +33,4 @@ Thumbs.db
 
 # Test coverage
 coverage/
+dashboard_test_pg-ca-certificate.pem

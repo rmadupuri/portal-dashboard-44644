@@ -54,3 +54,5 @@ node_modules/.vite/
 
 # Claude internal
 .claude/
+
+/docs

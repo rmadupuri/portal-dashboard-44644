@@ -26,7 +26,7 @@ import SampleCountsByDataTypeChart from "@/components/analytics/SampleCountsByDa
 import NewDataReleaseChart from "@/components/analytics/NewDataReleaseChart";
 import PipelineFunnelChart from "@/components/analytics/PipelineFunnelChart";
 import SubmissionVolumeChart from "@/components/analytics/SubmissionVolumeChart";
-import AvgTimePerStageChart from "@/components/analytics/AvgTimePerStageChart";
+import SubmissionMixChart from "@/components/analytics/SubmissionMixChart";
 
 // Import tracker data (still used for cumulative growth)
 import issuesData from "@/data/issues.txt?raw";
@@ -166,10 +166,10 @@ const Analytics = () => {
             <PipelineFunnelChart />
           </div>
 
-          {/* Submission Volume + Avg Time per Stage side by side */}
+          {/* Submission Volume + Submission Mix side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
             <SubmissionVolumeChart />
-            <AvgTimePerStageChart />
+            <SubmissionMixChart />
           </div>
 
         </div>

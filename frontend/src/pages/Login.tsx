@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import SharedLayout from "@/components/SharedLayout";
 import { FaGoogle, FaGithub } from "react-icons/fa";
 import { User, LogOut, ArrowRight } from "lucide-react";
+import { login as kcLogin, logout as kcLogout } from "@/services/keycloak";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -33,17 +34,19 @@ const Login = () => {
     }
   }, [API_URL]);
 
+  // Login is handled by Keycloak. The idpHint routes straight to the chosen
+  // identity provider; without it, Keycloak shows its own login page.
   const handleGoogleLogin = () => {
-    window.location.href = `${API_URL}/api/auth/google`;
+    kcLogin('google');
   };
 
   const handleGithubLogin = () => {
-    window.location.href = `${API_URL}/api/auth/github`;
+    kcLogin('github');
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('authToken');
     setUser(null);
+    kcLogout();
   };
 
   const handleGoToDashboard = () => {

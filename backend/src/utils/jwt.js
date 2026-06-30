@@ -1,67 +1,10 @@
 /**
- * JWT Utility Functions
- * 
- * Helper functions for generating and verifying JWT tokens
+ * Token Utility Functions
+ *
+ * The backend no longer issues its own JWTs — authentication is delegated to
+ * Keycloak (validated in middleware/auth via JWKS). This module retains only
+ * the helper for pulling the bearer token off the Authorization header.
  */
-
-import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_change_this_in_production';
-const JWT_EXPIRE = process.env.JWT_EXPIRE || '7d';
-
-/**
- * Generate JWT token for a user
- * @param {Object} user - User object
- * @returns {string} JWT token
- */
-export function generateToken(user) {
-  const payload = {
-    id: user.id || null, // May be null for guest users
-    email: user.email,
-    role: user.role,
-    name: user.name,
-    provider: user.provider,
-    providerId: user.providerId,
-    isTemporary: user.isTemporary || false
-  };
-
-  return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: JWT_EXPIRE
-  });
-}
-
-/**
- * Verify JWT token
- * @param {string} token - JWT token
- * @returns {Object} Decoded token payload
- */
-export function verifyToken(token) {
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch (error) {
-    throw new Error('Invalid or expired token');
-  }
-}
-
-/**
- * Generate authentication response with token and user data
- * @param {Object} user - User object
- * @returns {Object} Auth response
- */
-export function generateAuthResponse(user) {
-  const token = generateToken(user);
-  
-  // Remove sensitive data
-  const { password, ...userWithoutPassword } = user;
-  
-  return {
-    status: 'success',
-    data: {
-      token,
-      user: userWithoutPassword
-    }
-  };
-}
 
 /**
  * Extract token from Authorization header
@@ -76,8 +19,5 @@ export function extractTokenFromHeader(authHeader) {
 }
 
 export default {
-  generateToken,
-  verifyToken,
-  generateAuthResponse,
-  extractTokenFromHeader
+  extractTokenFromHeader,
 };

@@ -1,7 +1,7 @@
 
-import React, { useState, useRef } from 'react';
-import { Check, Clock, X, Paperclip, MessageSquarePlus, FileText, Trash2, AlertTriangle } from 'lucide-react';
-import { updateCurationNotes, addFilesToSubmission, addNoteToSubmission, deleteSubmission } from '@/services/api';
+import React, { useState } from 'react';
+import { Check, Clock, X, Trash2, AlertTriangle } from 'lucide-react';
+import { updateCurationNotes, deleteSubmission } from '@/services/api';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { 
   suggestedPapersNormalFlow, 
@@ -33,6 +33,10 @@ export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-pa
     setCurationNotes(d.curationNotes || '');
     setCurationNotesArray(d.curationNotesArray || []);
   }, [d.submissionId, d.curationNotes]);
+
+  // The submitter is identified by matching the logged-in email to the submission email
+  const isSubmitter = !!currentUserEmail && !!d.email &&
+    currentUserEmail.toLowerCase().trim() === d.email.toLowerCase().trim();
 
   // Determine which flow to use
   const isNotCuratable = currentStatus === 'Not Curatable' || currentStatus === 'Missing Data';
@@ -149,12 +153,14 @@ export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-pa
             <Field label="Submitted" value={formatDate(d.createdAt)} />
           </Section>
 
-          {/* Contact */}
-          <Section title="Contact">
-            <Field label="Name" value={d.author} />
-            <Field label="Email" value={d.email} />
-            {d.canContactEmail === false && <Field label="Alt. Email" value={d.alternativeEmail} />}
-          </Section>
+          {/* Contact — only super users, or the submitter viewing their own submission */}
+          {(isSuperUser || isSubmitter) && (
+            <Section title="Contact">
+              <Field label="Name" value={d.author} />
+              <Field label="Email" value={d.email} />
+              {d.canContactEmail === false && <Field label="Alt. Email" value={d.alternativeEmail} />}
+            </Section>
+          )}
 
           {/* Study suggestion fields */}
           {isSuggest && (
@@ -176,6 +182,7 @@ export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-pa
               <Field label="Description" value={d.studyDescription} />
               <Field label="PMID / URL" value={d.pmid || d.associatedPaper} />
               <Field label="Link to Data" value={d.curatedDataLink} />
+              <Field label="Curation Access Granted?" value={d.accessGranted ? 'Yes' : undefined} />
               <Field label="Data Transformed?" value={d.isDataTransformed === true ? 'Yes' : d.isDataTransformed === false ? 'No' : undefined} />
               <Field label="Reference Genome" value={d.referenceGenome} />
               <Field label="Sharing" value={d.sharingPreference} />
@@ -184,10 +191,9 @@ export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-pa
           )}
 
           {/* Common */}
-          {(d.dataTypes || d.attachedFiles || d.notes) && (
+          {(d.dataTypes || d.notes) && (
             <Section title="Additional">
               <Field label="Data Types" value={d.dataTypes} />
-              <Field label="Attached Files" value={d.attachedFiles} />
               <Field label="Comments" value={d.notes} />
             </Section>
           )}
@@ -302,16 +308,12 @@ export const SubmissionFlowTracker = ({ currentStatus, trackType = 'suggested-pa
       {/* ─── Updates Thread ─────────────────────────────────────────────── */}
       <NotesThread
         submissionId={d.submissionId}
-        submitterEmail={d.email}
         curationNotes={curationNotes}
         curationNotesArray={curationNotesArray}
         curationNotesUpdatedAt={d.curationNotesUpdatedAt}
         setCurationNotes={setCurationNotes}
         setCurationNotesArray={setCurationNotesArray}
-        submitterNotes={d.submitterNotes || []}
         isSuperUser={isSuperUser}
-        currentUserEmail={currentUserEmail}
-        sharingPreference={d.sharingPreference}
       />
 
     </div>
@@ -391,16 +393,12 @@ interface CurationNote {
 
 interface NotesThreadProps {
   submissionId: string;
-  submitterEmail: string;
   curationNotes: string;
   curationNotesArray: CurationNote[];
   curationNotesUpdatedAt?: string | null;
   setCurationNotes: (v: string) => void;
   setCurationNotesArray: (v: CurationNote[]) => void;
-  submitterNotes: Array<{ text: string; addedAt: string; addedBy: string }>;
   isSuperUser: boolean;
-  currentUserEmail: string;
-  sharingPreference?: string;
 }
 
 const fmt = (iso: string) =>
@@ -410,52 +408,16 @@ const fmt = (iso: string) =>
   });
 
 const NotesThread: React.FC<NotesThreadProps> = ({
-  submissionId, submitterEmail, curationNotes, curationNotesArray, curationNotesUpdatedAt, setCurationNotes, setCurationNotesArray,
-  submitterNotes, isSuperUser, currentUserEmail, sharingPreference,
+  submissionId, curationNotes, curationNotesArray, curationNotesUpdatedAt, setCurationNotes, setCurationNotesArray,
+  isSuperUser,
 }) => {
-  const isSubmitter = !!currentUserEmail && !!submitterEmail &&
-    currentUserEmail.toLowerCase().trim() === submitterEmail.toLowerCase().trim();
-  const isPublic = !sharingPreference || sharingPreference === 'public';
-  const canSeeSubmitterNotes = isSuperUser || isSubmitter || isPublic;
-
-  const [note, setNote] = useState('');
   const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null);
   const [editingNoteText, setEditingNoteText] = useState('');
-  const [files, setFiles] = useState<File[]>([]);
-  const [fileInputKey, setFileInputKey] = useState(0);
-  const [folderInputKey, setFolderInputKey] = useState(0);
-  const [uploadMode, setUploadMode] = useState<'files' | 'folder' | null>(null);
-  const [composeTab, setComposeTab] = useState<'note' | 'files'>('note');
-  const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState('');
   const [savingCuration, setSavingCuration] = useState(false);
   const [flashMsg, setFlashMsg] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const flash = (msg: string) => { setFlashMsg(msg); setTimeout(() => setFlashMsg(''), 3000); };
-
-  const handleSendNote = async () => {
-    if (!note.trim()) return;
-    setSaving(true);
-    try { await addNoteToSubmission(submissionId, note); setNote(''); flash('Note added'); }
-    catch (e: any) { flash(e.message || 'Failed'); }
-    finally { setSaving(false); }
-  };
-
-  const handleUploadFiles = async () => {
-    if (!files.length) return;
-    setSaving(true);
-    try {
-      await addFilesToSubmission(submissionId, files);
-      setFiles([]);
-      setFileInputKey(k => k + 1);
-      setFolderInputKey(k => k + 1);
-      setUploadMode(null);
-      flash(`${files.length} file(s) uploaded`);
-    } catch (e: any) { flash(e.message || 'Failed'); }
-    finally { setSaving(false); }
-  };
 
   const handlePostCuration = async () => {
     if (!draft.trim()) return;
@@ -485,7 +447,7 @@ const NotesThread: React.FC<NotesThreadProps> = ({
     finally { setSavingCuration(false); }
   };
 
-  const hasAnyContent = !!curationNotes || (canSeeSubmitterNotes && submitterNotes.length > 0) || isSuperUser || isSubmitter;
+  const hasAnyContent = !!curationNotes || curationNotesArray.length > 0 || isSuperUser;
   if (!hasAnyContent) return null;
 
   return (
@@ -567,137 +529,6 @@ const NotesThread: React.FC<NotesThreadProps> = ({
         </div>
       )}
 
-      {/* Submitter Notes */}
-      {(isSubmitter || (canSeeSubmitterNotes && submitterNotes.length > 0)) && (
-        <div>
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Submitter</p>
-
-          {canSeeSubmitterNotes && submitterNotes.length > 0 && (
-            <div className="space-y-2.5 mb-3">
-              {submitterNotes.map((n, i) => (
-                <div key={i} className="flex gap-2.5 items-start">
-                  <span className="shrink-0 mt-0.5 inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-[10px] font-bold">S</span>
-                  <div className="pt-0.5">
-                    <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{n.text}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">{fmt(n.addedAt)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {isSubmitter && (
-            <div className="ml-8">
-              <div className="flex gap-3 mb-2">
-                {(['note', 'files'] as const).map(t => (
-                  <button key={t} onClick={() => setComposeTab(t)}
-                    className={`text-[11px] font-medium pb-0.5 transition-colors ${
-                      composeTab === t ? 'text-blue-600 border-b border-blue-500' : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
-                    {t === 'note' ? 'Add Note' : 'Add Files'}
-                  </button>
-                ))}
-              </div>
-
-              {composeTab === 'note' ? (
-                <div>
-                  <textarea
-                    value={note}
-                    onChange={e => setNote(e.target.value)}
-                    rows={2}
-                    placeholder="Write a note for the curation team…"
-                    className="w-full text-xs border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:border-blue-300 resize-none"
-                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSendNote(); }}
-                  />
-                  <div className="flex items-center justify-between mt-1.5">
-                    <span className="text-[10px] text-green-600">{flashMsg}</span>
-                    <button
-                      disabled={!note.trim() || saving}
-                      onClick={handleSendNote}
-                      className="text-xs px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
-                    >
-                      {saving ? 'Saving…' : 'Post Note'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-[10px] text-gray-400">
-                    Saved in <code className="bg-gray-100 px-1 rounded">update_{new Date().toISOString().slice(0, 10)}</code>
-                  </p>
-                  <input
-                    key={`tracker-file-${fileInputKey}`}
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={e => {
-                      if (!e.target.files?.length) return;
-                      const incoming = Array.from(e.target.files);
-                      setFiles(prev => {
-                        const base = uploadMode === 'folder' ? [] : prev;
-                        const existing = new Set(base.map(f => `${f.name}-${f.size}`));
-                        return [...base, ...incoming.filter(f => !existing.has(`${f.name}-${f.size}`))];
-                      });
-                      setUploadMode('files');
-                      setFileInputKey(k => k + 1);
-                    }}
-                  />
-                  <input
-                    key={`tracker-folder-${folderInputKey}`}
-                    ref={folderInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    // @ts-ignore
-                    webkitdirectory=""
-                    onChange={e => {
-                      if (!e.target.files?.length) return;
-                      setFiles(Array.from(e.target.files));
-                      setUploadMode('folder');
-                      setFolderInputKey(k => k + 1);
-                    }}
-                  />
-                  <div className="flex gap-2 items-center flex-wrap">
-                    <button onClick={() => fileInputRef.current?.click()}
-                      className="text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1.5">
-                      <Paperclip className="h-3.5 w-3.5" /> Select files
-                    </button>
-                    <button onClick={() => folderInputRef.current?.click()}
-                      className="text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1.5">
-                      <Paperclip className="h-3.5 w-3.5" /> Select folder
-                    </button>
-                    {files.length > 0 && (
-                      <button disabled={saving} onClick={handleUploadFiles}
-                        className="text-xs px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
-                        {saving ? 'Uploading…' : `Upload ${files.length} file(s)`}
-                      </button>
-                    )}
-                    <span className="text-[10px] text-green-600">{flashMsg}</span>
-                  </div>
-                  {files.length > 0 && (
-                    <ul className="space-y-1">
-                      {files.map((f, i) => (
-                        <li key={i} className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setFiles(prev => prev.filter((_, idx) => idx !== i))}
-                            className="p-0.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 shrink-0"
-                            title="Remove file"
-                          ><X className="h-3 w-3" /></button>
-                          <FileText className="h-3 w-3 shrink-0 text-gray-500" />
-                          <span className="text-[11px] text-gray-500 truncate">{f.name}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };

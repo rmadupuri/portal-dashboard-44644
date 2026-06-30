@@ -7,7 +7,8 @@
 
 import express from 'express';
 import fetch from 'node-fetch';
-import { clickhouseClient, submissionsDb } from '../db/index.js';
+import { clickhouseClient } from '../db/index.js';
+import { listSubmissions } from '../db/submissions.js';
 
 const router = express.Router();
 const CH_DB = process.env.CLICKHOUSE_DATABASE || 'cbioportal_public_blue';
@@ -264,13 +265,19 @@ router.get('/news-releases', async (req, res) => {
     if (!response.ok) throw new Error(`Failed to fetch news page: ${response.status}`);
     const html = await response.text();
 
-    const sections = html.split(/<doc-anchor-target[^>]*>/);
+    // Each release on the news page is delimited by an <h2 id="...">Month DD, YYYY</h2>
+    // header. Split on those headers and treat the text between consecutive headers as
+    // one release section. Non-data releases (e.g. feature announcements, version notes)
+    // are skipped so the chart always shows the latest actual data release.
+    const headerRegex = /<h2[^>]*>([^<]*\d{4}[^<]*)<\/h2>/g;
+    const headers = [...html.matchAll(headerRegex)];
     const releases = [];
 
-    sections.forEach(section => {
-      const dateMatch = section.match(/<span>([^<]*\d{4}[^<]*)<\/span>/);
-      if (!dateMatch) return;
-      const date = dateMatch[1].trim();
+    headers.forEach((header, i) => {
+      const date = header[1].trim();
+      const start = header.index + header[0].length;
+      const end = i + 1 < headers.length ? headers[i + 1].index : html.length;
+      const section = html.slice(start, end);
 
       const dataMatch = section.match(/Added data.*?consisting of ([\d,]+) samples from (\d+)/i);
       if (!dataMatch) return;
@@ -308,13 +315,9 @@ router.get('/news-releases', async (req, res) => {
 
 // ─── Submission Analytics Helpers ───────────────────────────────────────────
 
-// Load all submissions from LevelDB
+// Load all submissions from Postgres
 async function loadAllSubmissions() {
-  const submissions = [];
-  for await (const [key, sub] of submissionsDb.iterator()) {
-    submissions.push({ ...sub, id: key });
-  }
-  return submissions;
+  return listSubmissions();
 }
 
 // Map raw status to the 7-step pipeline stage
@@ -439,6 +442,57 @@ router.get('/submissions/avg-time-per-stage', async (req, res) => {
   } catch (error) {
     console.error('Avg time per stage error:', error);
     res.status(500).json({ status: 'error', message: 'Failed to fetch avg time per stage' });
+  }
+});
+
+/**
+ * GET /api/analytics/submissions/mix
+ * Composition of submissions across three categorical dimensions:
+ * submission type, publication type, and sharing preference.
+ */
+router.get('/submissions/mix', async (req, res) => {
+  try {
+    const submissions = await loadAllSubmissions();
+
+    const tally = (items) => {
+      const counts = {};
+      items.forEach(({ key, label }) => {
+        if (!key) return;
+        counts[key] = counts[key] || { name: label, count: 0 };
+        counts[key].count++;
+      });
+      return Object.values(counts);
+    };
+
+    const byType = tally(submissions.map(s => ({
+      key: s.submissionType,
+      label: s.submissionType === 'submit-data' ? 'Data Submission' : 'Study Suggestion',
+    })));
+
+    const byPublication = tally(submissions.map(s => ({
+      key: s.publicationType,
+      label: s.publicationType === 'published' ? 'Published'
+        : s.publicationType === 'preprint' ? 'Pre-publication' : null,
+    })));
+
+    const bySharing = tally(submissions.map(s => ({
+      key: s.sharingPreference,
+      label: s.sharingPreference === 'public' ? 'Public'
+        : s.sharingPreference === 'private' ? 'Private' : null,
+    })));
+
+    res.json({
+      status: 'success',
+      data: {
+        total: submissions.length,
+        byType,
+        byPublication,
+        bySharing,
+      },
+    });
+  } catch (error) {
+    console.error('Submission mix error:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch submission mix' });
   }
 });
 

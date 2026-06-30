@@ -1,12 +1,31 @@
 /**
- * User Database Operations
- * 
- * CRUD operations for user management with LevelDB
- * OAuth-only authentication (no passwords)
+ * User Database Operations (Postgres)
+ *
+ * CRUD operations for user management.
+ * OAuth-only authentication (no passwords).
  */
 
-import { usersDb } from './index.js';
+import { query } from './index.js';
 import { v4 as uuidv4 } from 'uuid';
+
+const toIso = (v) => (v ? new Date(v).toISOString() : null);
+
+/** Map a DB row to the camelCase user shape the app expects. */
+function rowToUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    institution: row.institution,
+    role: row.role,
+    provider: row.provider,
+    providerId: row.provider_id,
+    createdAt: toIso(row.created_at),
+    lastLogin: toIso(row.last_login),
+    updatedAt: toIso(row.updated_at),
+  };
+}
 
 /**
  * Create a new user (OAuth only)
@@ -15,46 +34,34 @@ import { v4 as uuidv4 } from 'uuid';
  */
 export async function createUser(userData) {
   const userId = `user_${uuidv4()}`;
-  
-  const user = {
-    id: userId,
-    email: userData.email.toLowerCase(),
-    name: userData.name || '',
-    institution: userData.institution || '',
-    role: userData.role || 'user', // 'user' or 'super'
-    provider: userData.provider, // 'google' or 'github'
-    providerId: userData.providerId, // Provider's user ID
-    createdAt: new Date().toISOString(),
-    lastLogin: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-
-  await usersDb.put(userId, user);
-  
-  return user;
+  const { rows } = await query(
+    `INSERT INTO users (id, email, name, institution, role, provider, provider_id, last_login)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+     RETURNING *`,
+    [
+      userId,
+      userData.email.toLowerCase(),
+      userData.name || '',
+      userData.institution || '',
+      userData.role || 'user',
+      userData.provider,
+      userData.providerId,
+    ]
+  );
+  return rowToUser(rows[0]);
 }
 
 /**
- * Find user by email
+ * Find user by email (case-insensitive)
  * @param {string} email - User email
  * @returns {Promise<Object|null>} User object or null
  */
 export async function findUserByEmail(email) {
-  const normalizedEmail = email.toLowerCase();
-  
-  try {
-    for await (const [key, user] of usersDb.iterator()) {
-      if (user.email === normalizedEmail) {
-        return { ...user, id: key };
-      }
-    }
-    return null;
-  } catch (error) {
-    if (error.code === 'LEVEL_NOT_FOUND') {
-      return null;
-    }
-    throw error;
-  }
+  const { rows } = await query(
+    'SELECT * FROM users WHERE lower(email) = lower($1) LIMIT 1',
+    [email]
+  );
+  return rows.length ? rowToUser(rows[0]) : null;
 }
 
 /**
@@ -63,15 +70,8 @@ export async function findUserByEmail(email) {
  * @returns {Promise<Object|null>} User object or null
  */
 export async function findUserById(userId) {
-  try {
-    const user = await usersDb.get(userId);
-    return { ...user, id: userId };
-  } catch (error) {
-    if (error.code === 'LEVEL_NOT_FOUND') {
-      return null;
-    }
-    throw error;
-  }
+  const { rows } = await query('SELECT * FROM users WHERE id = $1', [userId]);
+  return rows.length ? rowToUser(rows[0]) : null;
 }
 
 /**
@@ -81,45 +81,52 @@ export async function findUserById(userId) {
  * @returns {Promise<Object|null>} User object or null
  */
 export async function findUserByProviderId(provider, providerId) {
-  try {
-    for await (const [key, user] of usersDb.iterator()) {
-      if (user.provider === provider && user.providerId === providerId) {
-        return { ...user, id: key };
-      }
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
+  const { rows } = await query(
+    'SELECT * FROM users WHERE provider = $1 AND provider_id = $2 LIMIT 1',
+    [provider, providerId]
+  );
+  return rows.length ? rowToUser(rows[0]) : null;
 }
 
+// Fields a caller is permitted to update, mapped to their column names.
+const UPDATABLE_COLUMNS = {
+  email: 'email',
+  name: 'name',
+  institution: 'institution',
+  role: 'role',
+  lastLogin: 'last_login',
+};
+
 /**
- * Update user
+ * Update user. Only known, permitted fields are applied; id/provider/createdAt
+ * are immutable (matching the previous LevelDB behaviour).
  * @param {string} userId - User ID
  * @param {Object} updates - Fields to update
  * @returns {Promise<Object>} Updated user
  */
 export async function updateUser(userId, updates) {
-  const user = await findUserById(userId);
-  if (!user) {
-    throw new Error('User not found');
+  const sets = [];
+  const values = [];
+  let i = 1;
+
+  for (const [key, column] of Object.entries(UPDATABLE_COLUMNS)) {
+    if (updates[key] !== undefined) {
+      let val = updates[key];
+      if (key === 'email' && typeof val === 'string') val = val.toLowerCase();
+      sets.push(`${column} = $${i++}`);
+      values.push(val);
+    }
   }
 
-  const updatedUser = {
-    ...user,
-    ...updates,
-    updatedAt: new Date().toISOString()
-  };
+  sets.push('updated_at = now()');
+  values.push(userId);
 
-  // Don't allow updating certain fields
-  delete updatedUser.id;
-  delete updatedUser.createdAt;
-  delete updatedUser.provider;
-  delete updatedUser.providerId;
-
-  await usersDb.put(userId, updatedUser);
-  
-  return updatedUser;
+  const { rows } = await query(
+    `UPDATE users SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+    values
+  );
+  if (!rows.length) throw new Error('User not found');
+  return rowToUser(rows[0]);
 }
 
 /**
@@ -127,11 +134,10 @@ export async function updateUser(userId, updates) {
  * @param {string} userId - User ID
  */
 export async function updateLastLogin(userId) {
-  const user = await findUserById(userId);
-  if (user) {
-    user.lastLogin = new Date().toISOString();
-    await usersDb.put(userId, user);
-  }
+  await query(
+    'UPDATE users SET last_login = now(), updated_at = now() WHERE id = $1',
+    [userId]
+  );
 }
 
 /**
@@ -139,7 +145,7 @@ export async function updateLastLogin(userId) {
  * @param {string} userId - User ID
  */
 export async function deleteUser(userId) {
-  await usersDb.del(userId);
+  await query('DELETE FROM users WHERE id = $1', [userId]);
 }
 
 /**
@@ -147,11 +153,8 @@ export async function deleteUser(userId) {
  * @returns {Promise<Array>} Array of users
  */
 export async function getAllUsers() {
-  const users = [];
-  for await (const [key, user] of usersDb.iterator()) {
-    users.push({ ...user, id: key });
-  }
-  return users;
+  const { rows } = await query('SELECT * FROM users ORDER BY created_at DESC');
+  return rows.map(rowToUser);
 }
 
 /**
@@ -166,14 +169,75 @@ export async function updateUserRole(userId, role) {
   return updateUser(userId, { role });
 }
 
+/**
+ * Find a user by their Keycloak subject id.
+ */
+export async function findUserByKeycloakSub(sub) {
+  const { rows } = await query('SELECT * FROM users WHERE keycloak_sub = $1 LIMIT 1', [sub]);
+  return rows.length ? rowToUser(rows[0]) : null;
+}
+
+/**
+ * Just-in-time provision a user from Keycloak token claims.
+ * Resolution order: (1) match by keycloak_sub, (2) link an existing row by
+ * email, (3) create a new user. Keeps the stable app `user_<uuid>` id so the
+ * submissions.user_id linkage is preserved across the auth migration.
+ *
+ * @param {{sub:string, email?:string, name?:string, role:'user'|'super'}} claims
+ * @returns {Promise<Object>} the app user (camelCase)
+ */
+export async function upsertKeycloakUser({ sub, email, name, role }) {
+  const normEmail = (email || '').toLowerCase();
+
+  // 1. Already linked by Keycloak sub
+  let { rows } = await query('SELECT * FROM users WHERE keycloak_sub = $1 LIMIT 1', [sub]);
+  if (rows.length) {
+    const res = await query(
+      `UPDATE users SET email = COALESCE($2, email), name = COALESCE($3, name),
+         role = $4, last_login = now(), updated_at = now()
+       WHERE id = $1 RETURNING *`,
+      [rows[0].id, normEmail || null, name || null, role]
+    );
+    return rowToUser(res.rows[0]);
+  }
+
+  // 2. Existing app user with the same email — link it to this Keycloak identity
+  if (normEmail) {
+    ({ rows } = await query(
+      'SELECT * FROM users WHERE lower(email) = $1 ORDER BY last_login DESC NULLS LAST LIMIT 1',
+      [normEmail]
+    ));
+    if (rows.length) {
+      const res = await query(
+        `UPDATE users SET keycloak_sub = $2, name = COALESCE($3, name), role = $4,
+           last_login = now(), updated_at = now()
+         WHERE id = $1 RETURNING *`,
+        [rows[0].id, sub, name || null, role]
+      );
+      return rowToUser(res.rows[0]);
+    }
+  }
+
+  // 3. Brand-new user
+  const id = `user_${uuidv4()}`;
+  const res = await query(
+    `INSERT INTO users (id, email, name, role, keycloak_sub, last_login)
+     VALUES ($1, $2, $3, $4, $5, now()) RETURNING *`,
+    [id, normEmail, name || '', role, sub]
+  );
+  return rowToUser(res.rows[0]);
+}
+
 export default {
   createUser,
   findUserByEmail,
   findUserById,
   findUserByProviderId,
+  findUserByKeycloakSub,
+  upsertKeycloakUser,
   updateUser,
   updateLastLogin,
   deleteUser,
   getAllUsers,
-  updateUserRole
+  updateUserRole,
 };

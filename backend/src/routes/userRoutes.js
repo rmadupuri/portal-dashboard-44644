@@ -161,14 +161,7 @@ router.delete('/:id', async (req, res) => {
     });
   } catch (error) {
     console.error('Delete user error:', error);
-    
-    if (error.code === 'LEVEL_NOT_FOUND') {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User not found'
-      });
-    }
-    
+
     res.status(500).json({
       status: 'error',
       message: 'Failed to delete user'

@@ -1,12 +1,12 @@
 /**
  * Authentication Routes
- * 
- * OAuth-only authentication (Google & GitHub)
+ *
+ * Authentication is handled by Keycloak (OIDC). The frontend obtains tokens
+ * directly from Keycloak; the backend only validates them (see middleware/auth)
+ * and exposes the current user's profile.
  */
 
 import express from 'express';
-import passport from '../config/passport.js';
-import { generateToken } from '../utils/jwt.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -35,76 +35,8 @@ router.get('/profile', authenticateToken, async (req, res) => {
 });
 
 /**
- * @route   GET /api/auth/google
- * @desc    Initiate Google OAuth
- * @access  Public
- */
-router.get('/google',
-  passport.authenticate('google', { 
-    scope: ['profile', 'email'],
-    session: false 
-  })
-);
-
-/**
- * @route   GET /api/auth/google/callback
- * @desc    Google OAuth callback
- * @access  Public
- */
-router.get('/google/callback',
-  passport.authenticate('google', { 
-    session: false,
-    failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`
-  }),
-  (req, res) => {
-    try {
-      const token = generateToken(req.user);
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
-      res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
-    } catch (error) {
-      console.error('Google callback error:', error);
-      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
-    }
-  }
-);
-
-/**
- * @route   GET /api/auth/github
- * @desc    Initiate GitHub OAuth
- * @access  Public
- */
-router.get('/github',
-  passport.authenticate('github', { 
-    scope: ['user:email'],
-    session: false 
-  })
-);
-
-/**
- * @route   GET /api/auth/github/callback
- * @desc    GitHub OAuth callback
- * @access  Public
- */
-router.get('/github/callback',
-  passport.authenticate('github', { 
-    session: false,
-    failureRedirect: `${process.env.FRONTEND_URL}/login?error=github_auth_failed`
-  }),
-  (req, res) => {
-    try {
-      const token = generateToken(req.user);
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
-      res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
-    } catch (error) {
-      console.error('GitHub callback error:', error);
-      res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
-    }
-  }
-);
-
-/**
  * @route   POST /api/auth/logout
- * @desc    Logout (client-side token removal)
+ * @desc    Logout (client clears its token; Keycloak session ended client-side)
  * @access  Private
  */
 router.post('/logout', authenticateToken, (req, res) => {

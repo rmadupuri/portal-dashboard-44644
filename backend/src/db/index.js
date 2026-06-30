@@ -1,24 +1,23 @@
 /**
- * LevelDB Database Setup + ClickHouse HTTP Client
- * 
- * Creates three separate LevelDB instances:
- * - users: User accounts and authentication
- * - submissions: Data submission records
- * - sessions: Active session tokens (optional)
- * 
- * ClickHouse queries use the HTTP interface via node-fetch
- * (replaces @clickhouse/client for Node 16 compatibility)
+ * Database Setup — Postgres (app data) + ClickHouse HTTP Client (genomics)
+ *
+ * App operational data (users, submissions) lives in Postgres, accessed via a
+ * pooled `pg` connection. The read-only genomics analytics still use ClickHouse
+ * over its HTTP interface (unchanged).
  */
 
 import fetch from 'node-fetch';
-import { Level } from 'level';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import pg from 'pg';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// backend/ root (this file is at backend/src/db/index.js)
+const BACKEND_ROOT = path.join(__dirname, '../../');
 
-// ─── Lightweight ClickHouse HTTP client ────────────────────────────────────
+// ─── Lightweight ClickHouse HTTP client (genomics analytics — unchanged) ─────
 const CH_HOST = process.env.CLICKHOUSE_HOST || 'https://dl96orhu96.us-east-1.aws.clickhouse.cloud';
 const CH_PORT = process.env.CLICKHOUSE_PORT || '';
 const CH_USER = process.env.CLICKHOUSE_USERNAME || 'default';
@@ -71,75 +70,84 @@ export const clickhouseClient = {
   },
 };
 
-// Database path - stores in project root/data directory
-const dbPath = path.join(__dirname, '../../data');
+// ─── Postgres connection pool (app data) ─────────────────────────────────────
 
-console.log('📁 LevelDB path:', dbPath);
+/**
+ * Build the SSL config for the pool. node-pg does NOT honor PGSSLMODE /
+ * PGSSLROOTCERT from the environment the way libpq does, so we apply them here.
+ * - If PGSSLROOTCERT is set, verify against that CA (verify-full behaviour).
+ * - Else if an SSL mode other than 'disable' is requested, encrypt without
+ *   certificate verification.
+ * - Else (e.g. local dev) disable SSL.
+ */
+function buildSslConfig() {
+  const certName = process.env.PGSSLROOTCERT;
+  const mode = (process.env.PGSSLMODE || '').toLowerCase();
 
-// Create three separate databases with JSON encoding
-export const usersDb = new Level(path.join(dbPath, 'users'), { 
-  valueEncoding: 'json' 
+  if (certName) {
+    const certPath = path.isAbsolute(certName) ? certName : path.join(BACKEND_ROOT, certName);
+    return {
+      ca: fs.readFileSync(certPath, 'utf8'),
+      rejectUnauthorized: true,
+    };
+  }
+  if (mode && mode !== 'disable') {
+    return { rejectUnauthorized: false };
+  }
+  return false;
+}
+
+const { Pool } = pg;
+
+export const pool = new Pool({
+  host: process.env.PGHOST,
+  port: Number(process.env.PGPORT) || 5432,
+  user: process.env.PGUSER,
+  password: process.env.PGPASSWORD,
+  database: process.env.PGDATABASE,
+  ssl: buildSslConfig(),
+  max: Number(process.env.PG_POOL_MAX) || 10,
 });
 
-export const submissionsDb = new Level(path.join(dbPath, 'submissions'), { 
-  valueEncoding: 'json' 
+pool.on('error', (err) => {
+  console.error('❌ Unexpected Postgres pool error:', err);
 });
 
-export const sessionsDb = new Level(path.join(dbPath, 'sessions'), { 
-  valueEncoding: 'json' 
-});
+/** Run a parameterized query against the pool. */
+export function query(text, params) {
+  return pool.query(text, params);
+}
 
-// Initialize databases
+/**
+ * Initialize the database: ensure the app schema exists. Safe to run on every
+ * boot (CREATE TABLE IF NOT EXISTS). Also verifies connectivity early.
+ */
 export async function initializeDatabases() {
   try {
-    await usersDb.open();
-    await submissionsDb.open();
-    await sessionsDb.open();
-    console.log('✅ LevelDB databases initialized successfully');
+    const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+    await pool.query(schema);
+    console.log(`✅ Postgres connected & schema ready (db: ${process.env.PGDATABASE} @ ${process.env.PGHOST})`);
   } catch (error) {
-    console.error('❌ Failed to initialize databases:', error);
+    console.error('❌ Failed to initialize Postgres:', error);
     throw error;
   }
 }
 
-// Close databases
+/** Close the connection pool. */
 export async function closeDatabases() {
   try {
-    await usersDb.close();
-    await submissionsDb.close();
-    await sessionsDb.close();
-    console.log('✅ LevelDB databases closed successfully');
+    await pool.end();
+    console.log('✅ Postgres pool closed');
   } catch (error) {
-    console.error('❌ Failed to close databases:', error);
+    console.error('❌ Failed to close Postgres pool:', error);
     throw error;
-  }
-}
-
-// Helper function to get all entries from a database
-export async function getAllEntries(db) {
-  const entries = [];
-  for await (const [key, value] of db.iterator()) {
-    entries.push({ key, ...value });
-  }
-  return entries;
-}
-
-// Helper function to delete all entries (for testing)
-export async function clearDatabase(db) {
-  const keys = [];
-  for await (const [key] of db.iterator()) {
-    keys.push(key);
-  }
-  for (const key of keys) {
-    await db.del(key);
   }
 }
 
 export default {
-  usersDb,
-  submissionsDb,
-  sessionsDb,
+  pool,
+  query,
+  clickhouseClient,
   initializeDatabases,
-  getAllEntries,
-  clearDatabase
+  closeDatabases,
 };

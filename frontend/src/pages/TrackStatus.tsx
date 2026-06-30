@@ -30,9 +30,9 @@ const TrackStatus = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   
-  const paperColumnDefs = usePaperColumnDefs();
-  const dataColumnDefs = useDataColumnDefs();
-  const mySubmissionsColumnDefs = useMySubmissionsColumnDefs();
+  const paperColumnDefs = usePaperColumnDefs(isSuperUser);
+  const dataColumnDefs = useDataColumnDefs(isSuperUser);
+  const mySubmissionsColumnDefs = useMySubmissionsColumnDefs(isSuperUser);
 
   // Fetch user profile (role + email) — runs independently so isSuperUser is set before grid renders
   useEffect(() => {
@@ -135,6 +135,7 @@ const TrackStatus = () => {
           studyName: sub.studyName,
           studyDescription: sub.description,
           curatedDataLink: sub.linkToData,
+          accessGranted: sub.accessGranted === true,
           isDataTransformed: sub.isDataTransformed,
           referenceGenome: sub.referenceGenome,
           associatedPaper: sub.associatedPaper,
@@ -144,7 +145,6 @@ const TrackStatus = () => {
           // Common
           dataTypes: sub.dataTypes?.length > 0 ? sub.dataTypes.join(', ') : null,
           notes: sub.notes,
-          attachedFiles: sub.attachmentCount > 0 ? `${sub.attachmentCount} file(s)` : null,
           supersededBy: sub.supersededBy || null,
           supersededAt: sub.supersededAt || null,
           curationNotes: sub.curationNotes || '',
@@ -220,13 +220,13 @@ const TrackStatus = () => {
     const data = submissions.filter(sub => sub.submissionType === 'submit-data');
     return {
       publishedData: data.filter(sub => sub.publicationType === 'published'),
-      // Non-superusers only see public pre-publication submissions in the Pre-publication tab
-      preprintData: data.filter(sub =>
-        sub.publicationType === 'preprint' &&
-        (isSuperUser || sub.sharingPreference === 'public')
-      )
+      // Pre-publication submissions (public or private) are only visible to super
+      // users and the user who submitted them. The backend already restricts which
+      // preprints reach this client (own submissions for regular users, all for
+      // super users), so every preprint present here is one the user may see.
+      preprintData: data.filter(sub => sub.publicationType === 'preprint')
     };
-  }, [submissions, isSuperUser]);
+  }, [submissions]);
 
   // My submissions — filtered by form email if provided, otherwise login email
   const mySubmissions = useMemo(() => {
@@ -451,7 +451,7 @@ const TrackStatus = () => {
                     <div className="text-center py-12">
                       <p className="text-gray-500 text-lg">No pre-publication submissions found.</p>
                       <p className="text-gray-400 text-sm mt-2">
-                        {isLoggedIn ? 'Submit your first preprint or dataset to see it here!' : 'Only publicly shared pre-publication submissions are shown to guests.'}
+                        {isLoggedIn ? 'Submit your first preprint or dataset to see it here!' : 'Pre-publication submissions are only visible to the user who submitted them and super users. Please log in to see yours.'}
                       </p>
                     </div>
                   ) : (
@@ -472,8 +472,8 @@ const TrackStatus = () => {
                           />
                         </div>
                       )}
-                      {/* Private Data Submissions — only shown to super users */}
-                      {isSuperUser && filteredDataSubmissions.filter(s => s.sharingPreference === 'private').length > 0 && (
+                      {/* Private Data Submissions — shown to super users and the submitter */}
+                      {filteredDataSubmissions.filter(s => s.sharingPreference === 'private').length > 0 && (
                         <div>
                           <h3 className="text-lg font-semibold text-gray-700 mb-3">Private Data Submissions</h3>
                           <SubmissionGrid

@@ -1,108 +1,96 @@
 /**
  * Submission Routes
- * 
+ *
  * Handles content submissions from the /submit form
- * - Stores form data in LevelDB
- * - Saves file attachments to data-submissions folder
+ * - Stores form data in Postgres
+ * - Data is shared by the submitter via an external link (Google Drive, Dropbox,
+ *   Box, etc.) with view access granted to the curation team
  * - Auto-registers users on submission
  */
 
 import express from 'express';
-import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { body, validationResult } from 'express-validator';
 import { v4 as uuidv4 } from 'uuid';
-import { submissionsDb } from '../db/index.js';
+import { getSubmission, listSubmissions, saveSubmission, removeSubmission } from '../db/submissions.js';
 import { createUser, findUserByEmail } from '../db/users.js';
-import { isSuperUserEmail } from '../config/superUsers.js';
 import { authenticateToken, optionalAuth } from '../middleware/auth.js';
-import { notifyNewSubmission, notifyFilesAdded, notifyNoteAdded } from '../utils/slack.js';
+import { notifyNewSubmission, notifyNoteAdded } from '../utils/slack.js';
 import {
   normalizeIdentifier,
-  getSubmissionIdentifiers,
   findConflict,
   findSimilarByTitle,
-  getSubmissionTitle,
 } from '../utils/duplicateDetection.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// File storage root — configurable via env var, defaults to <project>/data-submissions
+// Legacy file storage root — newer submissions share data via an external link,
+// but older submissions may still have files on disk that we clean up on delete.
 const DATA_SUBMISSIONS_DIR = process.env.DATA_SUBMISSIONS_DIR
   || path.join(__dirname, '../../data-submissions');
 
+// Curation team account that submitters must grant data access to.
+export const CURATION_EMAIL = 'cdsicuration@mskcc.org';
+
 const router = express.Router();
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: async function (req, file, cb) {
-    const submissionId = req.params.id || req.body.submissionId || `submission_${uuidv4()}`;
-    if (!req.body.submissionId) req.body.submissionId = submissionId;
-
-    // If originalname contains path separators (from webkitRelativePath),
-    // create the full nested directory so multer can write the file there.
-    // Directory is only created when there is an actual file to write.
-    const relativePath = file.originalname.replace(/\\/g, '/');
-    const subdir = relativePath.includes('/')
-      ? path.dirname(relativePath)
-      : '';
-
-    const baseDir = path.join(DATA_SUBMISSIONS_DIR, submissionId);
-    const uploadDir = subdir ? path.join(baseDir, subdir) : baseDir;
-
-    try {
-      // mkdir is called here — this is fine because multer only invokes
-      // destination() when it has a real file to store, so the folder
-      // is never created for submissions with no attachments.
-      await fs.mkdir(uploadDir, { recursive: true });
-      cb(null, uploadDir);
-    } catch (error) {
-      cb(error, null);
-    }
-  },
-  filename: function (req, file, cb) {
-    // Strip any leading path components — destination() already created the
-    // correct subdirectory, so here we only need the bare filename
-    const bare = path.basename(file.originalname.replace(/\\/g, '/'));
-    cb(null, bare);
-  }
-});
-
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 200 * 1024 * 1024, // 200MB limit
-  },
-  fileFilter: function (req, file, cb) {
-    // Accept all file types
-    cb(null, true);
-  }
-});
+/**
+ * Public-safe projection of a submission.
+ *
+ * The full submission document contains submitter PII (email, alternative
+ * email, contact preference), restricted fields (privateAccessEmails), and
+ * internal curation content (curationNotes, submitterNotes). None of that may
+ * be exposed on the unauthenticated /public endpoint — only non-sensitive
+ * bibliographic/status fields needed to render the public board are returned.
+ */
+function toPublicSubmission(s) {
+  return {
+    id: s.id,
+    submissionType: s.submissionType,
+    publicationType: s.publicationType,
+    status: s.status,
+    displayStatus: s.displayStatus,
+    submittedAt: s.submittedAt,
+    // Study / paper bibliographic info (already public for published work)
+    paperTitle: s.paperTitle,
+    studyName: s.studyName,
+    description: s.description,
+    journal: s.journal,
+    authors: s.authors,
+    publicationYear: s.publicationYear,
+    pmid: s.pmid,
+    associatedPaper: s.associatedPaper,
+    linkToData: s.linkToData,
+    dataTypes: s.dataTypes,
+    referenceGenome: s.referenceGenome,
+    isDataTransformed: s.isDataTransformed,
+    isLeadAuthor: s.isLeadAuthor,
+    submitterName: s.submitterName,
+    supersededBy: s.supersededBy || null,
+    supersededAt: s.supersededAt || null,
+  };
+}
 
 /**
  * GET /api/submit/public
  * Get public submissions for non-authenticated users:
  * - All published submissions (study suggestions + data submissions)
- * - Pre-publication data submissions with sharingPreference === 'public'
+ * Pre-publication submissions (public or private) are intentionally excluded —
+ * they are only visible to super users and the user who submitted them.
  */
 router.get('/public', async (req, res) => {
   try {
-    const submissions = [];
-
-    for await (const [key, submission] of submissionsDb.iterator()) {
-      // Always include published submissions
-      if (submission.publicationType === 'published') {
-        submissions.push({ ...submission, id: key });
-        continue;
-      }
-      // Include pre-publication only if sharing preference is public
-      if (submission.publicationType === 'preprint' && submission.sharingPreference === 'public') {
-        submissions.push({ ...submission, id: key });
-      }
-    }
+    // Only published submissions are public; pre-publication submissions are
+    // restricted to super users and their submitter (served via GET /api/submit).
+    // Each is reduced to a public-safe projection so submitter PII and internal
+    // curation notes are never exposed to unauthenticated callers.
+    const all = await listSubmissions();
+    const submissions = all
+      .filter(s => s.publicationType === 'published')
+      .map(toPublicSubmission);
 
     submissions.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 
@@ -141,18 +129,16 @@ router.post('/bulk-import',
 
       // Optionally wipe existing study-suggestion / github-import entries
       if (clearExisting) {
-        const toDelete = [];
-        for await (const [key, val] of submissionsDb.iterator()) {
-          if (
-            key.startsWith('github_') ||
+        const existing = await listSubmissions();
+        const toDelete = existing
+          .filter(val =>
+            val.id.startsWith('github_') ||
             val.submissionType === 'suggest-paper' ||
             val.source === 'github-import'
-          ) {
-            toDelete.push(key);
-          }
-        }
+          )
+          .map(val => val.id);
         for (const key of toDelete) {
-          await submissionsDb.del(key);
+          await removeSubmission(key);
         }
         deleted = toDelete.length;
         console.log(`🗑️  Bulk import: deleted ${deleted} existing study-suggestion entries`);
@@ -173,7 +159,7 @@ router.post('/bulk-import',
         }
         seenKeys.add(key);
 
-        await submissionsDb.put(key, { ...sub, id: key });
+        await saveSubmission(key, { ...sub, id: key });
         imported++;
       }
 
@@ -199,30 +185,37 @@ router.post('/bulk-import',
  */
 router.post('/',
   authenticateToken,
-  upload.fields([
-    { name: 'files', maxCount: 500 },
-    { name: 'data', maxCount: 1 }
-  ]),
   async (req, res) => {
     try {
       console.log('📥 Received submission from:', req.user.email);
-      
-      // Parse the form data
-      const formData = JSON.parse(req.body.data || '{}');
-      
+
+      // Form data arrives as a JSON object (no file uploads — data is shared
+      // by the submitter via an external link with access granted to curation).
+      const formData = req.body.data || {};
+
+      // Data submissions (and all preprints) must include a data-sharing link
+      // and confirm that curation has been granted access to it.
+      const needsDataLink = formData.actionType === 'submit-data' || formData.publicationType === 'preprint';
+      if (needsDataLink) {
+        if (!formData.linkToData || !String(formData.linkToData).trim()) {
+          return res.status(400).json({
+            status: 'error',
+            message: 'A link to your data (Google Drive, Dropbox, Box, etc.) is required.',
+          });
+        }
+        if (formData.accessGranted !== true) {
+          return res.status(400).json({
+            status: 'error',
+            message: `Please confirm you have granted data access to ${CURATION_EMAIL}.`,
+          });
+        }
+      }
+
       let userId = req.user.id;
       
       // If user is temporary (guest), create them in DB now
       // But only if they're NOT a super user
       if (req.user.isTemporary && req.user.role !== 'super') {
-        // Double-check they're not a super user
-        if (isSuperUserEmail(req.user.email)) {
-          return res.status(403).json({
-            status: 'error',
-            message: 'Super users should already be registered. Please contact admin.'
-          });
-        }
-        
         // Check if user already exists by email
         let existingUser = await findUserByEmail(req.user.email);
         
@@ -243,19 +236,8 @@ router.post('/',
       }
       
       // Generate submission ID
-      const submissionId = req.body.submissionId || `submission_${uuidv4()}`;
-      
-      // Process uploaded files
-      // With upload.fields(), files are in req.files as an object with field names as keys
-      const uploadedFiles = (req.files?.files || []).map(file => ({
-        originalName: file.originalname,
-        relativePath: file.originalname, // bare filename; webkitRelativePath already encoded in path
-        filename: file.filename,
-        size: file.size,
-        mimetype: file.mimetype,
-        path: file.path
-      }));
-      
+      const submissionId = `submission_${uuidv4()}`;
+
       // Create submission object
       const submission = {
         id: submissionId,
@@ -285,30 +267,26 @@ router.post('/',
         description: formData.description,
         associatedPaper: formData.associatedPaper,
         linkToData: formData.linkToData,
+        accessGranted: formData.accessGranted === true, // submitter confirmed curation access
         isDataTransformed: formData.isDataTransformed,
         referenceGenome: formData.referenceGenome,
-        
+
         // Common fields
         dataTypes: formData.dataTypes || [],
         otherDataType: formData.otherDataType,
         notes: formData.notes,
-        
+
         // Pre-print specific
         sharingPreference: formData.sharingPreference, // 'public' or 'private'
         privateAccessEmails: formData.privateAccessEmails,
-        
-        // File attachments
-        attachments: uploadedFiles,
-        hasAttachments: uploadedFiles.length > 0,
-        attachmentCount: uploadedFiles.length,
-        
+
         // Timestamps
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       
       // ─── Duplicate / conflict detection ────────────────────────────────────────
-      const skipDuplicateCheck = req.body.skipDuplicateCheck === 'true';
+      const skipDuplicateCheck = req.body.skipDuplicateCheck === true;
       const isPublished = formData.publicationType === 'published';
 
       console.log(`🔍 Duplicate check: isPublished=${isPublished}, role=${req.user.role}, skipDuplicateCheck=${skipDuplicateCheck}`);
@@ -320,8 +298,11 @@ router.post('/',
           if (n) incomingIds.add(n);
         }
 
+        // Load all submissions once for both duplicate-detection layers
+        const allSubmissions = await listSubmissions();
+
         // Layer 1: Hard conflict — PMID / DOI / URL exact match
-        const conflict = await findConflict(submissionsDb, formData.actionType, incomingIds);
+        const conflict = findConflict(allSubmissions, formData.actionType, incomingIds);
 
         if (conflict) {
           const newIsData = formData.actionType === 'submit-data';
@@ -359,12 +340,14 @@ router.post('/',
           // allow it, but tag the existing suggestion as superseded
           if (newIsData && !existingIsData) {
             try {
-              const existingSub = await submissionsDb.get(conflict.existingId);
-              existingSub.supersededBy = submissionId;
-              existingSub.supersededAt = new Date().toISOString();
-              existingSub.updatedAt = new Date().toISOString();
-              await submissionsDb.put(conflict.existingId, existingSub);
-              console.log(`⚠️  Suggestion ${conflict.existingId} superseded by new data submission ${submissionId}`);
+              const existingSub = await getSubmission(conflict.existingId);
+              if (existingSub) {
+                existingSub.supersededBy = submissionId;
+                existingSub.supersededAt = new Date().toISOString();
+                existingSub.updatedAt = new Date().toISOString();
+                await saveSubmission(conflict.existingId, existingSub);
+                console.log(`⚠️  Suggestion ${conflict.existingId} superseded by new data submission ${submissionId}`);
+              }
             } catch (e) {
               console.warn('⚠️  Could not tag superseded suggestion:', e.message);
             }
@@ -374,7 +357,7 @@ router.post('/',
         // Layer 2: Soft warning — title similarity (skippable by user)
         if (!skipDuplicateCheck) {
           const incomingTitle = formData.paperTitle || formData.studyName || '';
-          const similar = await findSimilarByTitle(submissionsDb, incomingTitle);
+          const similar = findSimilarByTitle(allSubmissions, incomingTitle);
           if (similar) {
             return res.status(409).json({
               status: 'conflict',
@@ -390,8 +373,8 @@ router.post('/',
         }
       }
 
-      // Save to LevelDB
-      await submissionsDb.put(submissionId, submission);
+      // Save to Postgres
+      await saveSubmission(submissionId, submission);
       
       // Notify Slack (fire-and-forget)
       notifyNewSubmission(submission);
@@ -399,8 +382,8 @@ router.post('/',
       console.log(`✅ Submission created: ${submissionId}`);
       console.log(`   Type: ${submission.submissionType}`);
       console.log(`   User: ${req.user.email}`);
-      console.log(`   Files: ${uploadedFiles.length}`);
-      
+      console.log(`   Data link: ${submission.linkToData || '(none)'}`);
+
       res.status(201).json({
         status: 'success',
         message: 'Submission created successfully',
@@ -408,7 +391,6 @@ router.post('/',
           submissionId,
           submissionType: submission.submissionType,
           status: submission.status,
-          attachmentCount: uploadedFiles.length
         }
       });
       
@@ -432,8 +414,14 @@ router.get('/:id',
   authenticateToken,
   async (req, res) => {
     try {
-      const submission = await submissionsDb.get(req.params.id);
-      
+      const submission = await getSubmission(req.params.id);
+      if (!submission) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Submission not found'
+        });
+      }
+
       // Check permissions
       if (submission.userId !== req.user.id && req.user.role !== 'super') {
         return res.status(403).json({
@@ -441,20 +429,13 @@ router.get('/:id',
           message: 'Access denied. You can only view your own submissions.'
         });
       }
-      
+
       res.json({
         status: 'success',
-        data: { submission: { ...submission, id: req.params.id } }
+        data: { submission }
       });
-      
+
     } catch (error) {
-      if (error.code === 'LEVEL_NOT_FOUND') {
-        return res.status(404).json({
-          status: 'error',
-          message: 'Submission not found'
-        });
-      }
-      
       console.error('Get submission error:', error);
       res.status(500).json({
         status: 'error',
@@ -473,19 +454,12 @@ router.get('/',
   authenticateToken,
   async (req, res) => {
     try {
-      const submissions = [];
-      
-      for await (const [key, submission] of submissionsDb.iterator()) {
-        // Super users see all submissions
-        if (req.user.role === 'super') {
-          submissions.push({ ...submission, id: key });
-        } 
-        // Regular users only see their own
-        else if (submission.userId === req.user.id) {
-          submissions.push({ ...submission, id: key });
-        }
-      }
-      
+      const all = await listSubmissions();
+      // Super users see all submissions; regular users only see their own
+      const submissions = all.filter(submission =>
+        req.user.role === 'super' || submission.userId === req.user.id
+      );
+
       // Sort by submission date (newest first)
       submissions.sort((a, b) => 
         new Date(b.submittedAt) - new Date(a.submittedAt)
@@ -546,34 +520,33 @@ router.patch('/:id/status',
         });
       }
       
-      const submission = await submissionsDb.get(req.params.id);
-      
-      submission.status = req.body.status;
-      submission.displayStatus = req.body.displayStatus || null;
-      submission.updatedAt = new Date().toISOString();
-      submission.statusUpdatedBy = req.user.id;
-      submission.statusUpdatedAt = new Date().toISOString();
-      
-      await submissionsDb.put(req.params.id, submission);
-      
-      console.log(`✅ Status updated: ${req.params.id} → ${req.body.status}`);
-      
-      res.json({
-        status: 'success',
-        message: 'Status updated successfully',
-        data: {
-          submission: { ...submission, id: req.params.id }
-        }
-      });
-      
-    } catch (error) {
-      if (error.code === 'LEVEL_NOT_FOUND') {
+      const submission = await getSubmission(req.params.id);
+      if (!submission) {
         return res.status(404).json({
           status: 'error',
           message: 'Submission not found'
         });
       }
-      
+
+      submission.status = req.body.status;
+      submission.displayStatus = req.body.displayStatus || null;
+      submission.updatedAt = new Date().toISOString();
+      submission.statusUpdatedBy = req.user.id;
+      submission.statusUpdatedAt = new Date().toISOString();
+
+      await saveSubmission(req.params.id, submission);
+
+      console.log(`✅ Status updated: ${req.params.id} → ${req.body.status}`);
+
+      res.json({
+        status: 'success',
+        message: 'Status updated successfully',
+        data: {
+          submission
+        }
+      });
+
+    } catch (error) {
       console.error('Update status error:', error);
       res.status(500).json({
         status: 'error',
@@ -595,7 +568,10 @@ router.patch('/:id/curation-notes',
       if (req.user.role !== 'super') {
         return res.status(403).json({ status: 'error', message: 'Only super users can update curation notes' });
       }
-      const submission = await submissionsDb.get(req.params.id);
+      const submission = await getSubmission(req.params.id);
+      if (!submission) {
+        return res.status(404).json({ status: 'error', message: 'Submission not found' });
+      }
       const { curationNotes, action, noteIndex } = req.body;
 
       // action='append'  → add a new note
@@ -633,99 +609,12 @@ router.patch('/:id/curation-notes',
       submission.curationNotesUpdatedBy = req.user.email;
       submission.updatedAt = new Date().toISOString();
 
-      await submissionsDb.put(req.params.id, submission);
+      await saveSubmission(req.params.id, submission);
       console.log(`✅ Curation notes updated: ${req.params.id} (${notes.length} note(s))`);
       res.json({ status: 'success', message: 'Curation notes updated', data: { curationNotesArray: notes, curationNotes: submission.curationNotes } });
     } catch (error) {
-      if (error.code === 'LEVEL_NOT_FOUND') {
-        return res.status(404).json({ status: 'error', message: 'Submission not found' });
-      }
       console.error('Update curation notes error:', error);
       res.status(500).json({ status: 'error', message: 'Failed to update curation notes' });
-    }
-  }
-);
-
-/**
- * POST /api/submit/:id/add-files
- * Submitter adds new files to an existing submission.
- * Files go into a subfolder named update_YYYY-MM-DD inside the submission directory.
- * Owner only.
- */
-router.post('/:id/add-files',
-  authenticateToken,
-  upload.fields([{ name: 'files', maxCount: 500 }]),
-  async (req, res) => {
-    try {
-      let submission;
-      try {
-        submission = await submissionsDb.get(req.params.id);
-      } catch (e) {
-        return res.status(404).json({ status: 'error', message: 'Submission not found' });
-      }
-
-      const ownerById = submission.userId === req.user.id;
-      const ownerByEmail = submission.submitterEmail &&
-        req.user.email &&
-        submission.submitterEmail.toLowerCase().trim() === req.user.email.toLowerCase().trim();
-
-      if (!ownerById && !ownerByEmail && req.user.role !== 'super') {
-        return res.status(403).json({ status: 'error', message: 'Access denied' });
-      }
-
-      const uploadedFiles = req.files?.files || [];
-      if (uploadedFiles.length === 0) {
-        return res.status(400).json({ status: 'error', message: 'No files provided' });
-      }
-
-      // Create dated subfolder: update_YYYY-MM-DD
-      const dateStr = new Date().toISOString().slice(0, 10);
-      const subfolderName = `update_${dateStr}`;
-      const subfolderPath = path.join(DATA_SUBMISSIONS_DIR, req.params.id, subfolderName);
-      await fs.mkdir(subfolderPath, { recursive: true });
-
-      // Move uploaded files from multer temp location into the dated subfolder
-      const newAttachments = [];
-      for (const file of uploadedFiles) {
-        const destPath = path.join(subfolderPath, file.originalname);
-        await fs.rename(file.path, destPath);
-        newAttachments.push({
-          originalName: file.originalname,
-          filename: file.originalname,
-          size: file.size,
-          mimetype: file.mimetype,
-          path: destPath,
-          subfolder: subfolderName,
-          addedAt: new Date().toISOString(),
-          addedBy: req.user.email,
-        });
-      }
-
-      // Append to existing attachments
-      submission.attachments = [...(submission.attachments || []), ...newAttachments];
-      submission.hasAttachments = true;
-      submission.attachmentCount = submission.attachments.length;
-      submission.updatedAt = new Date().toISOString();
-      submission.lastFileAddedAt = new Date().toISOString();
-
-      await submissionsDb.put(req.params.id, submission);
-
-      console.log(`✅ ${uploadedFiles.length} file(s) added to submission ${req.params.id} in ${subfolderName}`);
-
-      // Notify Slack — only for non-super users (submitter actions)
-      if (req.user.role !== 'super') {
-        const title = submission.studyName || submission.paperTitle || '';
-        notifyFilesAdded(req.params.id, uploadedFiles.length, req.user.email, title);
-      }
-
-      res.json({
-        status: 'success',
-        message: `${uploadedFiles.length} file(s) added successfully`,
-        data: { subfolder: subfolderName, files: newAttachments },
-      });
-    } catch (error) {
-      console.error('Add files error:', error);
-      res.status(500).json({ status: 'error', message: 'Failed to add files' });
     }
   }
 );
@@ -740,10 +629,8 @@ router.patch('/:id/add-note',
   authenticateToken,
   async (req, res) => {
     try {
-      let submission;
-      try {
-        submission = await submissionsDb.get(req.params.id);
-      } catch (e) {
+      const submission = await getSubmission(req.params.id);
+      if (!submission) {
         return res.status(404).json({ status: 'error', message: 'Submission not found' });
       }
 
@@ -770,7 +657,7 @@ router.patch('/:id/add-note',
       submission.submitterNotes = [...(submission.submitterNotes || []), newNote];
       submission.updatedAt = new Date().toISOString();
 
-      await submissionsDb.put(req.params.id, submission);
+      await saveSubmission(req.params.id, submission);
 
       console.log(`✅ Note added to submission ${req.params.id} by ${req.user.email}`);
 
@@ -801,8 +688,14 @@ router.delete('/:id',
   authenticateToken,
   async (req, res) => {
     try {
-      const submission = await submissionsDb.get(req.params.id);
-      
+      const submission = await getSubmission(req.params.id);
+      if (!submission) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Submission not found'
+        });
+      }
+
       // Check permissions
       if (submission.userId !== req.user.id && req.user.role !== 'super') {
         return res.status(403).json({
@@ -810,11 +703,11 @@ router.delete('/:id',
           message: 'Access denied. You can only delete your own submissions.'
         });
       }
-      
+
       // Delete from database
-      await submissionsDb.del(req.params.id);
+      await removeSubmission(req.params.id);
       
-      // Delete associated files
+      // Delete associated files for legacy submissions that uploaded attachments
       if (submission.hasAttachments) {
         const submissionDir = path.join(DATA_SUBMISSIONS_DIR, req.params.id);
         try {
@@ -824,7 +717,7 @@ router.delete('/:id',
           console.error(`⚠️  Failed to delete files for ${req.params.id}:`, error);
         }
       }
-      
+
       console.log(`✅ Submission deleted: ${req.params.id}`);
       
       res.json({
@@ -833,13 +726,6 @@ router.delete('/:id',
       });
       
     } catch (error) {
-      if (error.code === 'LEVEL_NOT_FOUND') {
-        return res.status(404).json({
-          status: 'error',
-          message: 'Submission not found'
-        });
-      }
-      
       console.error('Delete submission error:', error);
       res.status(500).json({
         status: 'error',
@@ -848,17 +734,5 @@ router.delete('/:id',
     }
   }
 );
-
-// Multer error handler — must have 4 params to be recognised by Express
-// eslint-disable-next-line no-unused-vars
-router.use((err, req, res, next) => {
-  if (err?.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ status: 'error', message: 'File too large. Maximum size is 100MB per file.' });
-  }
-  if (err?.code === 'LIMIT_FILE_COUNT' || err?.code === 'LIMIT_UNEXPECTED_FILE') {
-    return res.status(400).json({ status: 'error', message: 'Too many files. Maximum is 500 files per upload.' });
-  }
-  next(err);
-});
 
 export default router;

@@ -41,37 +41,23 @@ const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
 
 /**
  * Submit content form data to backend
- * New unified endpoint that handles all submission types
+ * New unified endpoint that handles all submission types.
+ * Data is shared by the submitter via an external link (no file uploads).
  */
-export const submitContent = async (formData: any, files?: File[], skipDuplicateCheck?: boolean) => {
+export const submitContent = async (formData: any, skipDuplicateCheck?: boolean) => {
   const token = localStorage.getItem('authToken');
-  
+
   if (!token) {
     throw new Error('Authentication required. Please log in.');
   }
-  
-  const data = new FormData();
-  data.append('data', JSON.stringify(formData));
-  if (skipDuplicateCheck) {
-    data.append('skipDuplicateCheck', 'true');
-  }
-  
-  // Append files if provided
-  // Use webkitRelativePath as the filename when available so subfolder
-  // structure is preserved on the backend (e.g. study/clinical/data.txt)
-  if (files && files.length > 0) {
-    files.forEach(file => {
-      const name = (file as any).webkitRelativePath || file.name;
-      data.append('files', file, name);
-    });
-  }
-  
+
   const response = await fetch(`${API_BASE_URL}/api/submit`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
     },
-    body: data
+    body: JSON.stringify({ data: formData, skipDuplicateCheck: !!skipDuplicateCheck }),
   });
 
   // 409 = duplicate/conflict — throw a structured error the form can inspect
@@ -100,18 +86,16 @@ export const submitContent = async (formData: any, files?: File[], skipDuplicate
  * Submit paper suggestion to backend
  * @deprecated Use submitContent instead
  */
-export const submitPaperSuggestion = async (data: any, file?: File | null) => {
-  const files = file ? [file] : [];
-  return submitContent(data, files);
+export const submitPaperSuggestion = async (data: any) => {
+  return submitContent(data);
 };
 
 /**
  * Submit curated data to backend
  * @deprecated Use submitContent instead
  */
-export const submitCuratedData = async (data: any, file?: File | null) => {
-  const files = file ? [file] : [];
-  return submitContent(data, files);
+export const submitCuratedData = async (data: any) => {
+  return submitContent(data);
 };
 
 /**
@@ -195,34 +179,6 @@ export const updateSubmissionStatus = async (id: string, status: string, display
     },
     body: JSON.stringify({ status, displayStatus })
   });
-};
-
-/**
- * Add files to an existing submission (owner only)
- * Files are stored in a dated subfolder: update_YYYY-MM-DD
- */
-export const addFilesToSubmission = async (id: string, files: File[]) => {
-  const token = localStorage.getItem('authToken');
-  if (!token) throw new Error('Authentication required. Please log in.');
-
-  const formData = new FormData();
-  files.forEach(file => {
-    const name = (file as any).webkitRelativePath || file.name;
-    formData.append('files', file, name);
-  });
-
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
-  const response = await fetch(`${API_URL}/api/submit/${id}/add-files`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}` },
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.message || 'Failed to add files');
-  }
-  return response.json();
 };
 
 /**

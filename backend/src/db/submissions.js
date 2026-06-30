@@ -1,83 +1,91 @@
-import { submissionsDb } from './index.js';
-import { v4 as uuidv4 } from 'uuid';
+/**
+ * Submission Store (Postgres)
+ *
+ * Submissions are rich, sparse, evolving documents, so the full object is kept
+ * in a JSONB `doc` column. A few fields are promoted into indexed columns for
+ * querying; they are derived from the document on every write.
+ *
+ * The stored document always carries its own `id` (equal to the primary key),
+ * so reads return `{ ...doc, id }` to match the previous LevelDB shape exactly.
+ */
 
-export async function createSubmission(submissionData) {
-  const submissionId = `submission_${uuidv4()}`;
-  const submission = {
-    id: submissionId,
-    userId: submissionData.userId,
-    studyId: submissionData.studyId,
-    cancerType: submissionData.cancerType,
-    status: submissionData.status || 'pending',
-    submissionDate: submissionData.submissionDate || new Date().toISOString(),
-    contactName: submissionData.contactName || '',
-    contactEmail: submissionData.contactEmail || '',
-    institutionName: submissionData.institutionName || '',
-    dataType: submissionData.dataType || '',
-    sampleCount: submissionData.sampleCount || 0,
-    validationNotes: submissionData.validationNotes || '',
-    fileUrl: submissionData.fileUrl || '',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+import { query } from './index.js';
+
+// Pull the promoted/indexed values out of a submission document.
+function promoted(doc) {
+  return {
+    userId: doc.userId ?? null,
+    submissionType: doc.submissionType ?? null,
+    publicationType: doc.publicationType ?? null,
+    status: doc.status ?? null,
+    submittedAt: doc.submittedAt ?? null,
   };
-  await submissionsDb.put(submissionId, submission);
-  return submission;
 }
 
-export async function findSubmissionById(submissionId) {
-  try {
-    const submission = await submissionsDb.get(submissionId);
-    return { ...submission, id: submissionId };
-  } catch (error) {
-    if (error.code === 'LEVEL_NOT_FOUND') return null;
-    throw error;
-  }
+/**
+ * Get a single submission by id.
+ * @returns {Promise<Object|null>} the submission document, or null if missing
+ */
+export async function getSubmission(id) {
+  const { rows } = await query('SELECT doc FROM submissions WHERE id = $1', [id]);
+  if (!rows.length) return null;
+  return { ...rows[0].doc, id };
 }
 
-export async function getAllSubmissions(options = {}) {
-  const submissions = [];
-  for await (const [key, submission] of submissionsDb.iterator()) {
-    let include = true;
-    if (options.userId && submission.userId !== options.userId) include = false;
-    if (options.status && submission.status !== options.status) include = false;
-    if (options.cancerType && submission.cancerType !== options.cancerType) include = false;
-    if (include) submissions.push({ ...submission, id: key });
-  }
-  submissions.sort((a, b) => new Date(b.submissionDate) - new Date(a.submissionDate));
-  if (options.limit) {
-    const start = options.offset || 0;
-    return submissions.slice(start, start + options.limit);
-  }
-  return submissions;
+/**
+ * List all submissions (full documents). Equivalent to iterating the old
+ * LevelDB store; callers filter/sort in memory as before.
+ * @returns {Promise<Array<Object>>}
+ */
+export async function listSubmissions() {
+  const { rows } = await query('SELECT id, doc FROM submissions');
+  return rows.map((r) => ({ ...r.doc, id: r.id }));
 }
 
-export async function getSubmissionsByUserId(userId) {
-  return getAllSubmissions({ userId });
+/**
+ * Insert or update a submission. The document is stored verbatim (with `id`
+ * forced to the key); promoted columns are kept in sync.
+ * @returns {Promise<Object>} the stored document
+ */
+export async function saveSubmission(id, doc) {
+  const stored = { ...doc, id };
+  const p = promoted(stored);
+
+  await query(
+    `INSERT INTO submissions
+       (id, user_id, submission_type, publication_type, status, submitted_at, updated_at, doc)
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()), $8)
+     ON CONFLICT (id) DO UPDATE SET
+       user_id          = EXCLUDED.user_id,
+       submission_type  = EXCLUDED.submission_type,
+       publication_type = EXCLUDED.publication_type,
+       status           = EXCLUDED.status,
+       submitted_at     = EXCLUDED.submitted_at,
+       updated_at       = now(),
+       doc              = EXCLUDED.doc`,
+    [
+      id,
+      p.userId,
+      p.submissionType,
+      p.publicationType,
+      p.status,
+      p.submittedAt,
+      stored.updatedAt ?? null,
+      stored, // node-pg serializes the object to JSON for the JSONB column
+    ]
+  );
+
+  return stored;
 }
 
-export async function updateSubmission(submissionId, updates) {
-  const submission = await findSubmissionById(submissionId);
-  if (!submission) throw new Error('Submission not found');
-  const updatedSubmission = {
-    ...submission,
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  };
-  delete updatedSubmission.id;
-  delete updatedSubmission.createdAt;
-  await submissionsDb.put(submissionId, updatedSubmission);
-  return updatedSubmission;
-}
-
-export async function deleteSubmission(submissionId) {
-  await submissionsDb.del(submissionId);
+/** Delete a submission by id (no-op if it doesn't exist). */
+export async function removeSubmission(id) {
+  await query('DELETE FROM submissions WHERE id = $1', [id]);
 }
 
 export default {
-  createSubmission,
-  findSubmissionById,
-  getAllSubmissions,
-  getSubmissionsByUserId,
-  updateSubmission,
-  deleteSubmission,
+  getSubmission,
+  listSubmissions,
+  saveSubmission,
+  removeSubmission,
 };

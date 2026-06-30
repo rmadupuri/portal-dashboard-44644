@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { LogIn, Menu, User, ChevronDown, Home } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { logout as kcLogout } from "@/services/keycloak";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,7 +15,6 @@ const Header = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [user, setUser] = useState<{ email: string; name: string } | null>(null);
   const isMobile = useIsMobile();
-  const navigate = useNavigate();
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5001";
 
   useEffect(() => {
@@ -43,10 +43,12 @@ const Header = () => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('authToken');
     setUser(null);
     setMobileMenuOpen(false);
-    navigate('/');
+    // Ends the Keycloak SSO session (not just the local token), so the next
+    // login actually re-authenticates instead of silently reusing the session.
+    // kcLogout clears localStorage.authToken and redirects to Keycloak.
+    kcLogout();
   };
 
   return (
