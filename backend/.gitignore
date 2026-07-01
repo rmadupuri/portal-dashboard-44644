@@ -7,30 +7,28 @@ node_modules/
 .env.production
 .env.*.local
 
+# Postgres CA certificate
+dashboard_test_pg-ca-certificate.pem
+
 # LevelDB runtime data
 data/
 data-submissions/
 
-# Uploaded files
-uploads/
+# Build output
+dist/
+build/
 
 # Logs
 logs/
 *.log
 npm-debug.log*
 
-# Build output
-dist/
-build/
+# Test coverage
+coverage/
 
 # OS
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-*.swp
-*.swo
-
-# Test coverage
-coverage/
-dashboard_test_pg-ca-certificate.pem
+*.sw?

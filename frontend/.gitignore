@@ -11,9 +11,6 @@ node_modules/
 dist/
 dist-ssr/
 
-# Vite cache
-node_modules/.vite/
-
 # OS
 .DS_Store
 Thumbs.db

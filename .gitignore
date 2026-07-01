@@ -7,7 +7,7 @@ node_modules/
 .env.production
 .env.*.local
 
-# ClickHouse creds
+# MCP config (ClickHouse creds)
 .mcp.json
 
 # Build output
@@ -15,14 +15,11 @@ dist/
 dist-ssr/
 build/
 
-# LevelDB runtime data 
+# LevelDB runtime data
 backend/data/
 backend/data-submissions/
 
-# Uploaded files
-backend/uploads/
-
-#restart script
+# Local restart script
 restart-webapp.sh
 
 # Logs
@@ -40,17 +37,10 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
 *.sw?
-*.swp
-*.swo
 
 # Vite
 *.local
-node_modules/.vite/
 
 # Claude internal
 .claude/
