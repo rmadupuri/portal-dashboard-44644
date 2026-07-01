@@ -8,12 +8,12 @@ import {
   fetchSamples,
   fetchStudiesCount,
   fetchCancerTypeSamples,
-  fetchStudySampleCounts,
+  fetchCumulativeGrowth,
   fetchSampleCountsByDataType
 } from "@/services/cbioportalApi";
 import { parseIssuesData, parsePullRequestsData } from "@/utils/dataParser";
 import {
-  processCumulativeGrowthData
+  processCumulativeGrowthFromYearCounts
 } from "@/utils/analyticsDataProcessors";
 import { getAvailableYears } from "@/utils/yearExtractor";
 import { logger } from "@/utils/logger";
@@ -72,7 +72,7 @@ const Analytics = () => {
     queryKey: ['sample-counts-by-datatype', selectedYear],
     queryFn: () => fetchSampleCountsByDataType(selectedYear),
   });
-  const { data: studySampleCounts = {} } = useQuery({ queryKey: ['study-sample-counts'], queryFn: fetchStudySampleCounts });
+  const { data: cumulativeGrowthRows = [] } = useQuery({ queryKey: ['cumulative-growth'], queryFn: fetchCumulativeGrowth });
 
   useEffect(() => {
     if (studiesError) {
@@ -89,14 +89,9 @@ const Analytics = () => {
   const totalSamples = samplesCount || 0;
 
   const { cumulativeGrowthData, unknownYearCount } = useMemo(() => {
-    if (!studies) return { cumulativeGrowthData: [], unknownYearCount: 0 };
-    const enrichedStudies = studies.map((study: any) => ({
-      ...study,
-      allSampleCount: studySampleCounts[study.studyId] ?? 0,
-    }));
-    const result = processCumulativeGrowthData(enrichedStudies);
+    const result = processCumulativeGrowthFromYearCounts(cumulativeGrowthRows);
     return { cumulativeGrowthData: result.data, unknownYearCount: result.unknownYearCount };
-  }, [studies, studySampleCounts]);
+  }, [cumulativeGrowthRows]);
 
   const availableYears = useMemo(() => {
     if (!studies) return [2018];

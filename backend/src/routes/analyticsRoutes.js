@@ -100,41 +100,133 @@ router.get('/study-sample-counts', async (req, res) => {
   }
 });
 
+// ─── Cumulative growth: study release years from the cBioPortal News.md ───────
+// Release dates are parsed from the raw News.md markdown (each study's earliest
+// appearance under a `## <Date>` heading), then cross-referenced with the study
+// list. Studies not found in the news fall back to, in order: Firehose Legacy →
+// 2011, a year in the study name, a year in the study id.
+const NEWS_MD_URL =
+  'https://raw.githubusercontent.com/cBioPortal/cbioportal/refs/heads/master/docs/News.md';
+const NEWS_CACHE_TTL_MS = 60 * 60 * 1000; // re-fetch News.md at most hourly
+let _newsCache = { at: 0, releaseYears: null };
+
+// Studies released before this year are bucketed into it on the growth chart.
+const GROWTH_MIN_YEAR = 2011;
+
+// First 4-digit year (1900–2099) found in a string, or null. The boundary uses
+// digit-only lookaround (not \b) so years after an underscore are recognised —
+// e.g. the `2013` in a study id like `mbn_mdacc_2013`.
+function extractYear(str) {
+  const m = String(str || '').match(/(?<![0-9])(?:19|20)\d{2}(?![0-9])/);
+  return m ? Number(m[0]) : null;
+}
+
+/**
+ * Parse study release years from News.md.
+ * @returns {Promise<Object>} { [studyId]: earliestYear }
+ */
+async function fetchNewsReleaseYears() {
+  if (_newsCache.releaseYears && Date.now() - _newsCache.at < NEWS_CACHE_TTL_MS) {
+    return _newsCache.releaseYears;
+  }
+
+  const resp = await fetch(NEWS_MD_URL, { headers: { 'User-Agent': 'portal-dashboard' } });
+  if (!resp.ok) throw new Error(`News.md fetch failed: ${resp.status}`);
+  const md = await resp.text();
+
+  // Split on `## <Date>` headings; within each dated section pull study ids out
+  // of cbioportal.org/study?id=... links and keep the earliest year seen.
+  const headingRe = /^## (.+)$/gm;
+  const studyRe = /cbioportal\.org\/study(?:\/summary)?\?id=([A-Za-z0-9_%-]+)/g;
+
+  const headings = [...md.matchAll(headingRe)];
+  const releaseYears = {};
+  for (let i = 0; i < headings.length; i++) {
+    const year = extractYear(headings[i][1]);
+    if (!year) continue;
+    const start = headings[i].index + headings[i][0].length;
+    const end = i + 1 < headings.length ? headings[i + 1].index : md.length;
+    const section = md.slice(start, end);
+
+    let m;
+    studyRe.lastIndex = 0;
+    while ((m = studyRe.exec(section)) !== null) {
+      let id;
+      try { id = decodeURIComponent(m[1]); } catch { id = m[1]; }
+      if (releaseYears[id] === undefined || year < releaseYears[id]) {
+        releaseYears[id] = year;
+      }
+    }
+  }
+
+  _newsCache = { at: Date.now(), releaseYears };
+  return releaseYears;
+}
+
+/**
+ * Resolve a study's release year: News.md date first, then fallbacks.
+ * @returns {number|null} the year, or null if none could be determined
+ */
+function resolveReleaseYear(studyId, name, newsYears) {
+  const fromNews = newsYears[studyId];
+  if (fromNews) return fromNews;                          // news
+  if (/firehose legacy/i.test(name || '')) return 2011;   // Firehose Legacy fallback
+  const fromName = extractYear(name);
+  if (fromName) return fromName;                          // year in name
+  const fromId = extractYear(studyId);
+  if (fromId) return fromId;                              // year in study id
+  return null;
+}
+
 /**
  * GET /api/analytics/cumulative-growth
+ * Per-year new studies + samples, with release years derived from News.md.
  */
 router.get('/cumulative-growth', async (req, res) => {
   try {
-    const result = await clickhouseClient.query({
-      query: `
-        SELECT
-            ${YEAR_EXPR} AS year,
-            count(DISTINCT cs.cancer_study_identifier) AS studies,
-            sum(sample_counts.cnt) AS samples
-        FROM ${CH_DB}.cancer_study cs
-        LEFT JOIN (
-            SELECT cancer_study_identifier, count(*) AS cnt
+    const [newsYears, studyRows, sampleRows] = await Promise.all([
+      fetchNewsReleaseYears(),
+      clickhouseClient
+        .query({
+          query: `SELECT cancer_study_identifier AS studyId, name FROM ${CH_DB}.cancer_study`,
+          format: 'JSONEachRow',
+        })
+        .then(r => r.json()),
+      clickhouseClient
+        .query({
+          query: `
+            SELECT cancer_study_identifier AS studyId, count(*) AS cnt
             FROM ${CH_DB}.sample_derived
             GROUP BY cancer_study_identifier
-        ) AS sample_counts ON cs.cancer_study_identifier = sample_counts.cancer_study_identifier
-        WHERE year >= 2011
-        GROUP BY year
-        ORDER BY year
-      `,
-      format: 'JSONEachRow',
-    });
+          `,
+          format: 'JSONEachRow',
+        })
+        .then(r => r.json()),
+    ]);
 
-    const rows = await result.json();
-    res.json({
-      status: 'success',
-      data: rows.map(row => ({
-        year: Number(row.year),
-        studies: Number(row.studies),
-        samples: Number(row.samples),
-      }))
-    });
+    const sampleCounts = {};
+    sampleRows.forEach(r => { sampleCounts[r.studyId] = Number(r.cnt); });
+
+    const perYear = {}; // year -> { studies, samples }
+    let unknownYearCount = 0;
+    for (const s of studyRows) {
+      const resolved = resolveReleaseYear(s.studyId, s.name, newsYears);
+      if (!resolved) { unknownYearCount++; continue; }
+      // Pre-2011 studies are counted in the chart's first year rather than dropped.
+      const year = Math.max(GROWTH_MIN_YEAR, resolved);
+      if (!perYear[year]) perYear[year] = { studies: 0, samples: 0 };
+      perYear[year].studies += 1;
+      perYear[year].samples += sampleCounts[s.studyId] || 0;
+    }
+
+    const data = Object.keys(perYear)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map(year => ({ year, studies: perYear[year].studies, samples: perYear[year].samples }));
+
+    res.json({ status: 'success', data, unknownYearCount });
   } catch (error) {
-    console.error('ClickHouse cumulative growth query error:', error);
+    console.error('Cumulative growth (news-based) error:', error);
     res.status(500).json({ status: 'error', message: 'Failed to fetch cumulative growth data' });
   }
 });

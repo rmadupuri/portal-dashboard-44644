@@ -40,3 +40,37 @@ export const processCumulativeGrowthData = (studies: any[]) => {
   logger.log('Processed cumulative growth data:', data.length, 'data points');
   return { data, unknownYearCount: 0 };
 };
+
+/**
+ * Build cumulative growth chart data from per-year counts returned by the
+ * backend (release years parsed from cBioPortal's News.md). Input rows are
+ * { year, studies, samples }; output adds running cumulative totals.
+ */
+export const processCumulativeGrowthFromYearCounts = (
+  rows: Array<{ year: number; studies: number; samples: number }>
+) => {
+  if (!rows || rows.length === 0) {
+    return { data: [], unknownYearCount: 0 };
+  }
+
+  const sorted = [...rows]
+    .filter(r => r.year >= YEAR_CONSTANTS.MIN_YEAR)
+    .sort((a, b) => a.year - b.year);
+
+  let cumulativeStudies = 0;
+  let cumulativeSamples = 0;
+  const data = sorted.map(r => {
+    cumulativeStudies += r.studies;
+    cumulativeSamples += r.samples;
+    return {
+      year: r.year,
+      newStudies: r.studies,
+      newSamples: r.samples,
+      cumulativeStudies,
+      cumulativeSamples,
+    };
+  });
+
+  logger.log('Processed cumulative growth (news-based):', data.length, 'data points');
+  return { data, unknownYearCount: 0 };
+};
