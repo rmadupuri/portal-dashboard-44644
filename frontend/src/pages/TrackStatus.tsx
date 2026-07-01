@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Search } from "lucide-react";
 import { SubmissionGrid } from "@/components/track-status/SubmissionGrid";
-import { usePaperColumnDefs, useDataColumnDefs, useMySubmissionsColumnDefs } from "@/components/track-status/GridConfig";
+import { usePaperColumnDefs, useDataColumnDefs, usePreprintDataColumnDefs, useMySubmissionsColumnDefs } from "@/components/track-status/GridConfig";
 import { SubmissionProgressKey } from "@/components/track-status/SubmissionProgressKey";
 import { logger } from "@/utils/logger";
 import { getMySubmissions, getPublicSubmissions } from "@/services/api";
@@ -32,6 +32,7 @@ const TrackStatus = () => {
   
   const paperColumnDefs = usePaperColumnDefs(isSuperUser);
   const dataColumnDefs = useDataColumnDefs(isSuperUser);
+  const preprintDataColumnDefs = usePreprintDataColumnDefs(isSuperUser);
   const mySubmissionsColumnDefs = useMySubmissionsColumnDefs(isSuperUser);
 
   // Fetch user profile (role + email) — runs independently so isSuperUser is set before grid renders
@@ -463,7 +464,7 @@ const TrackStatus = () => {
                           <SubmissionGrid
                             key={`pre-data-public-${isSuperUser}`}
                             rowData={filteredDataSubmissions.filter(s => s.sharingPreference === 'public')}
-                            columnDefs={dataColumnDefs}
+                            columnDefs={preprintDataColumnDefs}
                             trackType="submitted-data"
                             isSuperUser={isSuperUser}
                             currentUserEmail={userEmail}
@@ -479,7 +480,7 @@ const TrackStatus = () => {
                           <SubmissionGrid
                             key={`pre-data-private-${isSuperUser}`}
                             rowData={filteredDataSubmissions.filter(s => s.sharingPreference === 'private')}
-                            columnDefs={dataColumnDefs}
+                            columnDefs={preprintDataColumnDefs}
                             trackType="submitted-data"
                             isSuperUser={isSuperUser}
                             currentUserEmail={userEmail}

@@ -350,6 +350,14 @@ const statusCol: ColumnDef = {
 const pmidCol: ColumnDef = {
   field: 'pmid',
   headerName: 'PMID / URL',
+  // Pre-publication submissions have no PMID/URL, so leave the cell blank.
+  // Otherwise fall back to `associatedPaper` (the data form's "PMID or URL"
+  // field), since data submissions store the identifier there — matching the
+  // detail view.
+  valueGetter: (params: any) => {
+    if (params.data?.publicationType === 'preprint') return '';
+    return params.data?.pmid || params.data?.associatedPaper || '';
+  },
   width: 160,
   minWidth: 140,
   maxWidth: 200,
@@ -482,6 +490,11 @@ export const useDataColumnDefs = (isSuperUser: boolean = false): ColumnDef[] => 
   },
   dateCol
 ];
+
+// Pre-publication Data Submissions: same as Data Submissions but without the
+// PMID/URL column (pre-publication submissions have no PMID/URL).
+export const usePreprintDataColumnDefs = (isSuperUser: boolean = false): ColumnDef[] =>
+  useDataColumnDefs(isSuperUser).filter(col => col.field !== 'pmid');
 
 // My Submissions: unified table with Source column, shared title field
 export const useMySubmissionsColumnDefs = (isSuperUser: boolean = false): ColumnDef[] => [
