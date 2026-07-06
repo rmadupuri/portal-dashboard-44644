@@ -1,7 +1,7 @@
 /**
  * Analytics Routes
  *
- * Serves analytics data from ClickHouse cgds_public_blue database
+ * Serves read-only analytics data from ClickHouse (database set via CLICKHOUSE_DATABASE)
  * All routes are public (no auth required) — read-only queries
  */
 

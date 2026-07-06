@@ -18,16 +18,21 @@ const __dirname = path.dirname(__filename);
 const BACKEND_ROOT = path.join(__dirname, '../../');
 
 // ─── Lightweight ClickHouse HTTP client (genomics analytics — unchanged) ─────
-const CH_HOST = process.env.CLICKHOUSE_HOST || 'https://dl96orhu96.us-east-1.aws.clickhouse.cloud';
+const CH_HOST = process.env.CLICKHOUSE_HOST || '';
 const CH_PORT = process.env.CLICKHOUSE_PORT || '';
 const CH_USER = process.env.CLICKHOUSE_USERNAME || 'default';
 const CH_PASS = process.env.CLICKHOUSE_PASSWORD || '';
-const CH_DB = process.env.CLICKHOUSE_DATABASE || 'cgds_public_blue';
+const CH_DB = process.env.CLICKHOUSE_DATABASE || '';
 
-// Build base URL including port if specified
-const _chBase = new URL(CH_HOST);
-if (CH_PORT) _chBase.port = CH_PORT;
-const CH_URL = _chBase.toString();
+// Build base URL from CLICKHOUSE_HOST (no hardcoded fallback). If it isn't set,
+// CH_URL stays empty and queries throw a clear error when actually used, so the
+// rest of the app still boots without ClickHouse configured.
+let CH_URL = '';
+if (CH_HOST) {
+  const _chBase = new URL(CH_HOST);
+  if (CH_PORT) _chBase.port = CH_PORT;
+  CH_URL = _chBase.toString();
+}
 
 /**
  * Minimal ClickHouse client that matches the subset of the official API
@@ -35,8 +40,9 @@ const CH_URL = _chBase.toString();
  */
 export const clickhouseClient = {
   query: async ({ query, format = 'JSONEachRow' }) => {
+    if (!CH_URL) throw new Error('ClickHouse is not configured — set CLICKHOUSE_HOST.');
     const url = new URL('/', CH_URL);
-    url.searchParams.set('database', CH_DB);
+    if (CH_DB) url.searchParams.set('database', CH_DB);
     // Append FORMAT to the SQL so ClickHouse returns the right shape
     const fullQuery = `${query.trim().replace(/;$/, '')} FORMAT ${format}`;
 
