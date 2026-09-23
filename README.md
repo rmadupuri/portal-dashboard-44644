@@ -93,6 +93,8 @@ backend/
 │   └── utils/         # Helper functions
 └── scripts/           # LevelDB → PostgreSQL migration (one-time)
 
+keycloak/               # Local/test Keycloak (docker compose + realm import)
+
 frontend/
 └── src/
     ├── components/    # Shared UI components
@@ -114,6 +116,16 @@ The application uses Keycloak with OpenID Connect (OIDC).
 5. Once validated, the request is processed using the authenticated user's identity and roles.
 
 The application does **not** store or manage user passwords.
+
+### Passport mode (test servers without HTTPS)
+
+keycloak-js only works in a secure context (HTTPS or `localhost`). For an
+internal test server served over plain HTTP, set `AUTH_PROVIDER=passport` in the
+backend and `VITE_AUTH_PROVIDER=passport` in the frontend. Login then goes
+through Google/GitHub OAuth via Passport in the backend, which issues its own
+session token (signed with `JWT_SECRET`), and super users are the emails listed
+in `SUPER_USER_EMAILS`. See `backend/.env.example` for the full list of
+settings. Keycloak remains the default and is what production uses.
 
 ---
 
@@ -140,6 +152,9 @@ Images are multi-arch (`linux/amd64`, `linux/arm64`). **Keep `linux/arm64`**: th
 ### Building and running locally
 
 ```bash
+# Keycloak (dashboard realm + test users; see CONTRIBUTING.md)
+docker compose -f keycloak/docker-compose.yml up -d
+
 # Backend
 docker build -t dcd-backend ./backend
 docker run --rm -p 5001:5001 \
@@ -170,7 +185,7 @@ Precedence is runtime (`window.__ENV__`) → build-time (`.env`) → local dev d
 so `npm run dev` keeps working unchanged.
 
 Recognised variables: `VITE_API_URL`, `VITE_KEYCLOAK_URL`, `VITE_KEYCLOAK_REALM`,
-`VITE_KEYCLOAK_CLIENT_ID`. To add one, extend both `src/config.ts` and
+`VITE_KEYCLOAK_CLIENT_ID`, `VITE_AUTH_PROVIDER`. To add one, extend both `src/config.ts` and
 `docker-entrypoint.sh`.
 
 ### Backend deployment notes

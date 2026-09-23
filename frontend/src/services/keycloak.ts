@@ -1,5 +1,6 @@
 import Keycloak from 'keycloak-js';
-import { KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID } from '@/config';
+import { KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID, USE_PASSPORT } from '@/config';
+import * as passportAuth from '@/services/passportAuth';
 
 /**
  * Keycloak singleton for the dashboard.
@@ -8,6 +9,10 @@ import { KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID } from '@/config';
  * API helpers (services/api.ts) and ProtectedRoute — which read that key —
  * keep working unchanged. Keycloak remains the source of truth; localStorage is
  * just a transport for the current bearer token.
+ *
+ * With VITE_AUTH_PROVIDER=passport every export below delegates to
+ * services/passportAuth.ts instead, so callers never need to know which mode
+ * is active. The Keycloak instance is still constructed, but never initialised.
  */
 const keycloak = new Keycloak({
   url: KEYCLOAK_URL,
@@ -59,6 +64,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 let markAuthReady: () => void;
 export const authReady = new Promise<void>((resolve) => { markAuthReady = resolve; });
 
+// Must run at import, before main.tsx mounts the router — see consumeAuthCallback.
+if (USE_PASSPORT) passportAuth.consumeAuthCallback();
+
 let authSettled = false;
 void authReady.then(() => { authSettled = true; });
 
@@ -86,6 +94,7 @@ export interface TokenIdentity {
  */
 export function tokenIdentity(): TokenIdentity | null | undefined {
   if (!authSettled) return undefined;
+  if (USE_PASSPORT) return passportAuth.tokenIdentity();
   if (!keycloak.authenticated || !keycloak.tokenParsed) return null;
 
   const claims = keycloak.tokenParsed as {
@@ -104,6 +113,13 @@ let initialized = false;
 export async function initKeycloak() {
   if (initialized) return keycloak;
   initialized = true;
+
+  if (USE_PASSPORT) {
+    // Nothing to negotiate: the token, if any, is already in localStorage.
+    passportAuth.currentToken();
+    markAuthReady();
+    return keycloak;
+  }
 
   try {
     await withTimeout(
@@ -147,6 +163,8 @@ export async function initKeycloak() {
  * back to log in rather than retrying with a token the API will reject.
  */
 export async function ensureFreshToken(minValiditySeconds = 60): Promise<string | null> {
+  // Passport session tokens can't be renewed; an expired one means log in again.
+  if (USE_PASSPORT) return passportAuth.currentToken();
   if (!keycloak.authenticated) {
     localStorage.removeItem('authToken');
     return null;
@@ -166,6 +184,7 @@ export async function ensureFreshToken(minValiditySeconds = 60): Promise<string 
 
 /** Start login. Pass a same-origin path to return to the current workflow. */
 export function login(idpHint?: 'google' | 'github', returnPath = '/') {
+  if (USE_PASSPORT) return passportAuth.login(idpHint, returnPath);
   const requestedUrl = new URL(returnPath, window.location.origin);
   const redirectUri = requestedUrl.origin === window.location.origin
     ? requestedUrl.toString()
@@ -178,6 +197,7 @@ export function login(idpHint?: 'google' | 'github', returnPath = '/') {
 
 /** RP-initiated logout — also ends the Keycloak session. */
 export function logout() {
+  if (USE_PASSPORT) return passportAuth.logout();
   localStorage.removeItem('authToken');
   return keycloak.logout({ redirectUri: `${window.location.origin}/` });
 }

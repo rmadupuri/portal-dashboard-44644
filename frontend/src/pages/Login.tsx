@@ -7,11 +7,20 @@ import { login as kcLogin, logout as kcLogout } from "@/services/keycloak";
 import { API_URL } from "@/config";
 import { authReady } from '@/services/keycloak';
 
+// Codes the backend's OAuth callback redirects with (Passport mode).
+const LOGIN_ERRORS: Record<string, string> = {
+  no_verified_email: 'Your account has no verified email address. Verify one with the provider and try again.',
+  google_not_configured: 'Google sign-in is not configured on this server.',
+  github_not_configured: 'GitHub sign-in is not configured on this server.',
+};
+
 const Login = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [user, setUser] = useState<{ email: string; name: string } | null>(null);
   const requestedReturnTo = searchParams.get('returnTo');
+  const authError = LOGIN_ERRORS[searchParams.get('error') ?? ''] ??
+    (searchParams.get('error') ? 'Sign-in failed. Please try again.' : null);
   const returnTo = (() => {
     if (!requestedReturnTo || !requestedReturnTo.startsWith('/') || requestedReturnTo.startsWith('//')) {
       return '/';
@@ -136,6 +145,12 @@ const Login = () => {
                 Login is optional, but required for submitting data or suggesting papers.
               </p>
             </div>
+
+            {authError && (
+              <p role="alert" className="mb-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {authError}
+              </p>
+            )}
 
             {/* Login buttons */}
             <div className="space-y-3">

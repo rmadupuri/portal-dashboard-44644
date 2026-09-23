@@ -13,6 +13,10 @@ import submitRoutes from './routes/submitRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import lookupRoutes from './routes/lookupRoutes.js';
 import logger from './utils/logger.js';
+import { usePassport } from './config/authProvider.js';
+import passport, { configurePassport } from './config/passport.js';
+
+if (usePassport) configurePassport();
 
 const app = express();
 
@@ -44,6 +48,8 @@ app.use(cors({
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Passport runs without sessions: the OAuth callback hands the browser a token.
+if (usePassport) app.use(passport.initialize());
 // Rate limiter — higher limit in development, stricter in production
 // Public read-only endpoints are exempt (see below)
 const limiter = rateLimit({

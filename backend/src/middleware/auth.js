@@ -1,15 +1,20 @@
 /**
  * Authentication Middleware
  *
- * Verifies Keycloak-issued OIDC access tokens (RS256) against the realm's
- * JWKS, then just-in-time provisions the matching app user. The user's role is
- * derived entirely from the token's realm roles (the `super` role); role
- * assignment is managed in Keycloak.
+ * Keycloak mode (default): verifies Keycloak-issued OIDC access tokens (RS256)
+ * against the realm's JWKS, then just-in-time provisions the matching app user.
+ * The user's role is derived entirely from the token's realm roles (the `super`
+ * role); role assignment is managed in Keycloak.
+ *
+ * Passport mode (AUTH_PROVIDER=passport): verifies the session token this API
+ * issued after the OAuth callback and loads the user it names. The role was
+ * set from SUPER_USER_EMAILS at login.
  */
 
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { extractTokenFromHeader } from '../utils/jwt.js';
-import { upsertKeycloakUser } from '../db/users.js';
+import { extractTokenFromHeader, verifySessionToken } from '../utils/jwt.js';
+import { upsertKeycloakUser, findUserById } from '../db/users.js';
+import { usePassport } from '../config/authProvider.js';
 
 const KEYCLOAK_ISSUER =
   process.env.KEYCLOAK_ISSUER || 'http://localhost:8081/realms/dashboard';
@@ -24,15 +29,28 @@ const VERIFY_OPTIONS = { issuer: KEYCLOAK_ISSUER };
 if (KEYCLOAK_AUDIENCE) VERIFY_OPTIONS.audience = KEYCLOAK_AUDIENCE;
 
 // Remote JWKS — jose caches keys and refreshes on rotation.
-const JWKS = createRemoteJWKSet(
-  new URL(`${KEYCLOAK_ISSUER}/protocol/openid-connect/certs`)
-);
+const JWKS = usePassport
+  ? null
+  : createRemoteJWKSet(new URL(`${KEYCLOAK_ISSUER}/protocol/openid-connect/certs`));
+
+/**
+ * Verify a session token issued in Passport mode and load its user.
+ * @returns {Promise<Object>} req.user shape
+ */
+async function resolveUserFromSessionToken(token) {
+  const payload = await verifySessionToken(token);
+  const user = await findUserById(payload.sub);
+  if (!user) throw new Error('User not found');
+  return user;
+}
 
 /**
  * Verify a Keycloak access token and resolve it to an app user.
  * @returns {Promise<Object>} req.user shape
  */
 async function resolveUserFromToken(token) {
+  if (usePassport) return resolveUserFromSessionToken(token);
+
   const { payload } = await jwtVerify(token, JWKS, VERIFY_OPTIONS);
 
   const email = payload.email || '';

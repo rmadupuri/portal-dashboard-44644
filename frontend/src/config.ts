@@ -24,6 +24,7 @@ const buildTime = {
   VITE_KEYCLOAK_URL: import.meta.env.VITE_KEYCLOAK_URL,
   VITE_KEYCLOAK_REALM: import.meta.env.VITE_KEYCLOAK_REALM,
   VITE_KEYCLOAK_CLIENT_ID: import.meta.env.VITE_KEYCLOAK_CLIENT_ID,
+  VITE_AUTH_PROVIDER: import.meta.env.VITE_AUTH_PROVIDER,
 } as const;
 
 const pick = (key: keyof typeof buildTime, fallback: string): string =>
@@ -33,3 +34,9 @@ export const API_URL = pick("VITE_API_URL", "http://localhost:5001");
 export const KEYCLOAK_URL = pick("VITE_KEYCLOAK_URL", "http://localhost:8081");
 export const KEYCLOAK_REALM = pick("VITE_KEYCLOAK_REALM", "dashboard");
 export const KEYCLOAK_CLIENT_ID = pick("VITE_KEYCLOAK_CLIENT_ID", "dashboard-frontend");
+
+// "keycloak" (default) or "passport": Google/GitHub OAuth through the backend,
+// for test servers on plain HTTP where keycloak-js cannot run. Must match the
+// backend's AUTH_PROVIDER.
+export const AUTH_PROVIDER = pick("VITE_AUTH_PROVIDER", "keycloak").trim().toLowerCase();
+export const USE_PASSPORT = AUTH_PROVIDER === "passport";

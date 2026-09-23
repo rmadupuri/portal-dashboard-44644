@@ -228,6 +228,56 @@ export async function upsertKeycloakUser({ sub, email, name, role }) {
   return rowToUser(res.rows[0]);
 }
 
+/**
+ * Just-in-time provision a user from a Passport OAuth login (AUTH_PROVIDER=passport).
+ * Resolution order mirrors upsertKeycloakUser: (1) match by provider +
+ * provider_id, (2) link an existing row by email, (3) create a new user. The
+ * caller must pass a verified email, since step 2 trusts it.
+ *
+ * @param {{provider:string, providerId:string, email:string, name?:string, role:'user'|'super'}} profile
+ * @returns {Promise<Object>} the app user (camelCase)
+ */
+export async function upsertOAuthUser({ provider, providerId, email, name, role }) {
+  const normEmail = (email || '').toLowerCase();
+
+  // 1. Already linked to this provider identity
+  let { rows } = await query(
+    'SELECT * FROM users WHERE provider = $1 AND provider_id = $2 LIMIT 1',
+    [provider, providerId]
+  );
+  if (rows.length) {
+    const res = await query(
+      `UPDATE users SET email = $2, name = COALESCE(NULLIF($3, ''), name), role = $4,
+         last_login = now(), updated_at = now()
+       WHERE id = $1 RETURNING *`,
+      [rows[0].id, normEmail, name || '', role]
+    );
+    return rowToUser(res.rows[0]);
+  }
+
+  // 2. Existing app user with the same email (e.g. created under Keycloak).
+  // Link the provider only if the row has none, so an account first seen via
+  // Google isn't silently re-pointed at GitHub.
+  ({ rows } = await query(
+    'SELECT * FROM users WHERE lower(email) = $1 ORDER BY last_login DESC NULLS LAST LIMIT 1',
+    [normEmail]
+  ));
+  if (rows.length) {
+    const res = await query(
+      `UPDATE users SET
+         provider = COALESCE(provider, $2), provider_id = COALESCE(provider_id, $3),
+         name = COALESCE(NULLIF($4, ''), name), role = $5,
+         last_login = now(), updated_at = now()
+       WHERE id = $1 RETURNING *`,
+      [rows[0].id, provider, providerId, name || '', role]
+    );
+    return rowToUser(res.rows[0]);
+  }
+
+  // 3. Brand-new user
+  return createUser({ email: normEmail, name, provider, providerId, role });
+}
+
 export default {
   createUser,
   findUserByEmail,
@@ -235,6 +285,7 @@ export default {
   findUserByProviderId,
   findUserByKeycloakSub,
   upsertKeycloakUser,
+  upsertOAuthUser,
   updateUser,
   updateLastLogin,
   deleteUser,

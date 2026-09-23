@@ -23,7 +23,8 @@ window.__ENV__ = {
   VITE_API_URL: "$(escape "${VITE_API_URL:-}")",
   VITE_KEYCLOAK_URL: "$(escape "${VITE_KEYCLOAK_URL:-}")",
   VITE_KEYCLOAK_REALM: "$(escape "${VITE_KEYCLOAK_REALM:-}")",
-  VITE_KEYCLOAK_CLIENT_ID: "$(escape "${VITE_KEYCLOAK_CLIENT_ID:-}")"
+  VITE_KEYCLOAK_CLIENT_ID: "$(escape "${VITE_KEYCLOAK_CLIENT_ID:-}")",
+  VITE_AUTH_PROVIDER: "$(escape "${VITE_AUTH_PROVIDER:-}")"
 };
 EOF
 

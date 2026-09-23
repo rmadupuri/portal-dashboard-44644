@@ -1,13 +1,19 @@
 /**
  * Authentication Routes
  *
- * Authentication is handled by Keycloak (OIDC). The frontend obtains tokens
- * directly from Keycloak; the backend only validates them (see middleware/auth)
- * and exposes the current user's profile.
+ * Keycloak mode (default): the frontend obtains tokens directly from Keycloak;
+ * the backend only validates them (see middleware/auth) and exposes the current
+ * user's profile.
+ *
+ * Passport mode (AUTH_PROVIDER=passport) adds the Google/GitHub OAuth routes
+ * below, which end by redirecting to the frontend with a session token.
  */
 
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
+import { usePassport } from '../config/authProvider.js';
+import passport, { enabledProviders } from '../config/passport.js';
+import { signSessionToken } from '../utils/jwt.js';
 import {
   getCurationTeamWorkspace,
   listActiveCurationsForUser,
@@ -18,6 +24,54 @@ import {
 import logger from '../utils/logger.js';
 
 const router = express.Router();
+
+if (usePassport) {
+  const frontendUrl = () => process.env.FRONTEND_URL || 'http://localhost:8080';
+
+  // The token travels in the URL fragment, which browsers never send to a
+  // server, so it stays out of access logs and Referer headers.
+  const sendToFrontend = (res, params) =>
+    res.redirect(`${frontendUrl()}/auth/callback#${new URLSearchParams(params)}`);
+
+  const PROVIDER_SCOPES = { google: ['profile', 'email'], github: ['user:email'] };
+
+  /**
+   * @route   GET /api/auth/:provider  (google | github)
+   * @desc    Start OAuth with the provider
+   * @access  Public
+   */
+  router.get('/:provider(google|github)', (req, res, next) => {
+    const { provider } = req.params;
+    if (!enabledProviders.includes(provider)) {
+      return sendToFrontend(res, { error: `${provider}_not_configured` });
+    }
+    passport.authenticate(provider, { scope: PROVIDER_SCOPES[provider], session: false })(req, res, next);
+  });
+
+  /**
+   * @route   GET /api/auth/:provider/callback
+   * @desc    OAuth callback; redirects to the frontend with a session token
+   * @access  Public
+   */
+  router.get('/:provider(google|github)/callback', (req, res, next) => {
+    const { provider } = req.params;
+    if (!enabledProviders.includes(provider)) {
+      return sendToFrontend(res, { error: `${provider}_not_configured` });
+    }
+    passport.authenticate(provider, { session: false }, async (err, user, info) => {
+      if (err || !user) {
+        if (err) logger.error(`${provider} callback error:`, err);
+        return sendToFrontend(res, { error: info?.message || `${provider}_auth_failed` });
+      }
+      try {
+        sendToFrontend(res, { token: await signSessionToken(user) });
+      } catch (error) {
+        logger.error(`${provider} token error:`, error);
+        sendToFrontend(res, { error: 'auth_failed' });
+      }
+    })(req, res, next);
+  });
+}
 
 /**
  * @route   GET /api/auth/profile
@@ -77,7 +131,7 @@ router.patch('/notifications/:notificationId/read', authenticateToken, async (re
 
 /**
  * @route   POST /api/auth/logout
- * @desc    Logout (client clears its token; Keycloak session ended client-side)
+ * @desc    Logout (client clears its token; in Keycloak mode it also ends the Keycloak session)
  * @access  Private
  */
 router.post('/logout', authenticateToken, (req, res) => {
