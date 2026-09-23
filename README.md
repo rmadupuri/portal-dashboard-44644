@@ -206,8 +206,11 @@ Recognised variables: `VITE_API_URL`, `VITE_KEYCLOAK_URL`, `VITE_KEYCLOAK_REALM`
 
 ### Node version
 
-The frontend build requires **Node 18+** (Vite 4); the images use `node:20-alpine`.
-Both packages declare `engines.node: >=18` to match.
+Both packages run on **Node 16.14+** (`engines.node: >=16.14.0`), so they work on
+older servers whose glibc can't run newer official Node builds; the images use
+`node:20-alpine`. Keep it that way: the backend imports `fetch` from `node-fetch`
+(Node 16 has no global `fetch`) and pins `jose` to v4 (v5+ needs the global Web
+Crypto API, which Node 16 lacks). Lint tooling (ESLint 9) needs Node 18+.
 
 ## Contributing
 

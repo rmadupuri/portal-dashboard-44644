@@ -16,6 +16,7 @@
  * be added later without shipping either to the browser.
  */
 
+import fetch from 'node-fetch';
 import { normalizeIdentifier } from './duplicateDetection.js';
 import logger from './logger.js';
 

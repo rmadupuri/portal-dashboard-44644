@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "type": "module",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.14.0"
   },
   "scripts": {
     "dev": "nodemon src/index.js",
@@ -29,7 +29,7 @@
     "express-rate-limit": "^7.1.5",
     "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
-    "jose": "^6.2.3",
+    "jose": "^4.15.9",
     "morgan": "^1.10.0",
     "node-fetch": "^2.7.0",
     "passport": "^0.7.0",
