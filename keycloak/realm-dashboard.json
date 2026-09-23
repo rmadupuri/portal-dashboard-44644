@@ -1,0 +1,95 @@
+{
+  "realm": "dashboard",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "super",
+        "description": "Dashboard super user (curation team)"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "dashboard-frontend",
+      "name": "Data Contribution Dashboard",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "rootUrl": "",
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://curationdashboard.cbioportal.aws.mskcc.org/*",
+        "https://curationdashboard.cbioportal.aws.mskcc.org/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "dashboard-frontend audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "dashboard-frontend",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "curator",
+      "email": "curator@example.org",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "Curator",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "curator",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "super",
+        "offline_access",
+        "uma_authorization"
+      ]
+    },
+    {
+      "username": "contributor",
+      "email": "contributor@example.org",
+      "emailVerified": true,
+      "firstName": "Test",
+      "lastName": "Contributor",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "contributor",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ]
+    }
+  ]
+}

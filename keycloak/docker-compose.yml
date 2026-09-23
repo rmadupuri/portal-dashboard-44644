@@ -1,0 +1,33 @@
+# Local / test-server Keycloak for the dashboard.
+#
+#   docker compose -f keycloak/docker-compose.yml up -d
+#
+# Starts Keycloak 11 (served under /auth, matching production) on host port
+# 8081 and imports the `dashboard` realm from realm-dashboard.json on first
+# boot: a public `dashboard-frontend` client, the `super` realm role, and two
+# test users. Realm data lives in the `keycloak-data` volume, so users and
+# settings changed in the admin console survive restarts; `down -v` resets it
+# to the imported realm.
+#
+# For test use only — the admin password and test user passwords are public.
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:11.0.0
+    # Keycloak 11 is published for amd64 only; arm64 hosts run it emulated.
+    platform: linux/amd64
+    container_name: dashboard-keycloak
+    restart: unless-stopped
+    ports:
+      - "${KEYCLOAK_PORT:-8081}:8080"
+    environment:
+      KEYCLOAK_USER: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Skipped when the realm already exists in the volume.
+      KEYCLOAK_IMPORT: /tmp/realm-dashboard.json
+    volumes:
+      - ./realm-dashboard.json:/tmp/realm-dashboard.json:ro
+      - keycloak-data:/opt/jboss/keycloak/standalone/data
+
+volumes:
+  keycloak-data:

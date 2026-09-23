@@ -17,19 +17,30 @@ cd data-contribution-dashboard
 ### 1. Keycloak
 
 Authentication runs against Keycloak 11, which serves under the `/auth` context
-path:
+path. `keycloak/docker-compose.yml` starts one on port 8081 with the `dashboard`
+realm already configured:
 
 ```bash
-docker run -d --name kc11 --platform linux/amd64 -p 8081:8080 \
-  -e KEYCLOAK_USER=admin -e KEYCLOAK_PASSWORD=admin \
-  quay.io/keycloak/keycloak:11.0.0
+docker compose -f keycloak/docker-compose.yml up -d
 ```
 
-The admin console is at http://localhost:8081/auth/admin (`admin` / `admin`).
-Create a realm named `dashboard` and a public client `dashboard-frontend`.
+On first boot it imports `keycloak/realm-dashboard.json`, which contains:
 
-**Add `http://localhost:8080/*` to the client's Valid Redirect URIs.** If you
-skip this, silent SSO cannot complete and the app will not load.
+- a public client `dashboard-frontend` (PKCE, redirect URIs for
+  `http://localhost:8080/*` and the test server)
+- the `super` realm role
+- two test users: `curator` / `curator` (has `super`) and
+  `contributor` / `contributor` (regular user)
+
+The admin console is at http://localhost:8081/auth/admin (`admin` / `admin`;
+override with `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD`). Realm data is
+kept in a Docker volume, so changes made in the console survive restarts. To
+reset to the imported realm, run
+`docker compose -f keycloak/docker-compose.yml down -v`.
+
+Serving the app from a new host? Add `http://<host>/*` to the client's Valid
+Redirect URIs, either in the console or in the realm file before first boot.
+If you skip this, silent SSO cannot complete and the app will not load.
 
 ### 2. Backend
 
